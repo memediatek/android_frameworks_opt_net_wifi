@@ -18,6 +18,7 @@ package com.android.server.wifi.util;
 
 import static org.junit.Assert.*;
 
+import android.net.wifi.WifiSsid;
 import androidx.test.filters.SmallTest;
 
 import org.junit.Test;
@@ -116,6 +117,20 @@ public class NativeUtilTest {
     }
 
     /**
+     * Test that conversion of ssid bytes to quoted GBK string ssid works.
+     */
+    @Test
+    public void testGbkSsidDecode() throws Exception {
+        ArrayList<Byte> ssid = new ArrayList<>(
+                        Arrays.asList((byte) 0x41, (byte) 0x6e, (byte) 0x64, (byte) 0x72,
+                                (byte) 0x6f, (byte) 0x69, (byte) 0x64, (byte) 0x41, (byte) 0x50,
+                                (byte) 0xb2, (byte) 0xe2, (byte) 0xca, (byte) 0xd4));
+        WifiSsid wifiSsid = WifiSsid.createFromByteArray(NativeUtil.byteArrayFromArrayList(ssid));
+        GbkUtil.checkAndSetGbk(wifiSsid);
+        assertEquals(ssid, NativeUtil.decodeSsid("\"AndroidAP测试\""));
+    }
+
+    /**
      * Test that conversion of non utf-8 SSID string to bytes fail.
      */
     @Test
@@ -152,16 +167,29 @@ public class NativeUtilTest {
     }
 
     /**
-     * Test that conversion of ssid bytes to quoted string ssid works.
+     * Test that conversion of ssid bytes to quoted UTF8 string ssid works.
      */
     @Test
-    public void testSsidEncode() throws Exception {
+    public void testUtf8SsidEncode() throws Exception {
         assertEquals(
                 "\"ssid_test123\"",
                 NativeUtil.encodeSsid(new ArrayList<>(
                         Arrays.asList((byte) 's', (byte) 's', (byte) 'i', (byte) 'd', (byte) '_',
                                 (byte) 't', (byte) 'e', (byte) 's', (byte) 't', (byte) '1',
                                 (byte) '2', (byte) '3'))));
+    }
+
+    /**
+     * Test that conversion of ssid bytes to quoted GBK string ssid works.
+     */
+    @Test
+    public void testGbkSsidEncode() throws Exception {
+        assertEquals(
+                "\"AndroidAP测试\"",
+                NativeUtil.encodeSsid(new ArrayList<>(
+                        Arrays.asList((byte) 0x41, (byte) 0x6e, (byte) 0x64, (byte) 0x72,
+                                (byte) 0x6f, (byte) 0x69, (byte) 0x64, (byte) 0x41, (byte) 0x50,
+                                (byte) 0xb2, (byte) 0xe2, (byte) 0xca, (byte) 0xd4))));
     }
 
     /**
@@ -212,8 +240,24 @@ public class NativeUtilTest {
      * Test that parsing of quoted SSID to byte array and vice versa works.
      */
     @Test
-    public void testSsidEncodeDecode() throws Exception {
+    public void testUtf8SsidEncodeDecode() throws Exception {
         String ssid = "\"ssid_test123\"";
+        assertEquals(ssid, NativeUtil.encodeSsid(NativeUtil.decodeSsid(ssid)));
+    }
+
+    /**
+     * Test that parsing of quoted GBK SSID to byte array and vice versa works.
+     */
+    @Test
+    public void testGbkSsidEncodeDecode() throws Exception {
+        String ssid = "\"AndroidAP测试\"";
+        ArrayList<Byte> ssidBytes = new ArrayList<>(
+                        Arrays.asList((byte) 0x41, (byte) 0x6e, (byte) 0x64, (byte) 0x72,
+                                (byte) 0x6f, (byte) 0x69, (byte) 0x64, (byte) 0x41, (byte) 0x50,
+                                (byte) 0xb2, (byte) 0xe2, (byte) 0xca, (byte) 0xd4));
+        WifiSsid wifiSsid =
+                WifiSsid.createFromByteArray(NativeUtil.byteArrayFromArrayList(ssidBytes));
+        GbkUtil.checkAndSetGbk(wifiSsid);
         assertEquals(ssid, NativeUtil.encodeSsid(NativeUtil.decodeSsid(ssid)));
     }
 

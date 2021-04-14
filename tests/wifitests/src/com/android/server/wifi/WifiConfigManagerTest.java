@@ -43,6 +43,7 @@ import android.os.UserHandle;
 import android.os.UserManager;
 import android.os.test.TestLooper;
 import android.provider.Settings;
+import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.Pair;
@@ -63,6 +64,7 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.mockito.MockitoSession;
+import org.mockito.quality.Strictness;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -111,6 +113,11 @@ public class WifiConfigManagerTest {
     private static final int TEST_FREQUENCY_1 = 2412;
     private static final int TEST_FREQUENCY_2 = 5180;
     private static final int TEST_FREQUENCY_3 = 5240;
+    private static final int TEST_PHONE_COUNT = 2;
+    private static final int TEST_SIM_SLOT = 1;
+    private static final int[] TEST_SUB_ID = {1};
+    private static final MacAddress TEST_RANDOMIZED_MAC =
+            MacAddress.fromString("d2:11:19:34:a5:20");
 
     @Mock private Context mContext;
     @Mock private Clock mClock;
@@ -131,6 +138,7 @@ public class WifiConfigManagerTest {
     @Mock private RandomizedMacStoreData mRandomizedMacStoreData;
     @Mock private WifiConfigManager.OnSavedNetworkUpdateListener mWcmListener;
     @Mock private FrameworkFacade mFrameworkFacade;
+    @Mock private SubscriptionManager mSubscriptionManager;
     @Mock private CarrierNetworkConfig mCarrierNetworkConfig;
 
     private MockResources mResources;
@@ -208,6 +216,7 @@ public class WifiConfigManagerTest {
         when(mWifiPermissionsUtil.checkNetworkSettingsPermission(anyInt())).thenReturn(true);
         when(mWifiPermissionsWrapper.getDevicePolicyManagerInternal())
                 .thenReturn(mDevicePolicyManagerInternal);
+        when(mTelephonyManager.getPhoneCount()).thenReturn(TEST_PHONE_COUNT);
         when(mWifiInjector.getWifiLastResortWatchdog()).thenReturn(mWifiLastResortWatchdog);
         when(mWifiInjector.getWifiLastResortWatchdog().shouldIgnoreSsidUpdate())
                 .thenReturn(false);
@@ -224,12 +233,19 @@ public class WifiConfigManagerTest {
                 Settings.Global.WIFI_PNO_RECENCY_SORTING_ENABLED)), eq(false),
                 observerCaptor.capture());
         mContentObserverPnoRecencySorting = observerCaptor.getValue();
+        when(mContext.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE))
+                .thenReturn(mSubscriptionManager);
         // static mocking
         mSession = ExtendedMockito.mockitoSession()
                 .mockStatic(WifiConfigStore.class, withSettings().lenient())
+                .spyStatic(WifiConfigurationUtil.class)
+                .strictness(Strictness.LENIENT)
                 .startMocking();
-        when(WifiConfigStore.createUserFiles(anyInt())).thenReturn(mock(List.class));
+        when(WifiConfigStore.createUserFiles(anyInt(), any(UserManager.class)))
+                .thenReturn(mock(List.class));
         when(mTelephonyManager.createForSubscriptionId(anyInt())).thenReturn(mDataTelephonyManager);
+        when(WifiConfigurationUtil.calculatePersistentMacForConfiguration(any(), any()))
+                .thenReturn(TEST_RANDOMIZED_MAC);
     }
 
     /**
@@ -238,7 +254,9 @@ public class WifiConfigManagerTest {
     @After
     public void cleanup() {
         validateMockitoUsage();
-        mSession.finishMocking();
+        if (mSession != null) {
+            mSession.finishMocking();
+        }
     }
 
     /**
@@ -279,6 +297,28 @@ public class WifiConfigManagerTest {
 
         assertTrue(mWifiConfigManager.saveToStore(true));
         mContextConfigStoreMockOrder.verify(mWifiConfigStore).write(anyBoolean());
+    }
+
+    /**
+     * Verify that a randomized MAC address is generated even if the KeyStore operation fails.
+     */
+    @Test
+    public void testRandomizedMacIsGeneratedEvenIfKeyStoreFails() {
+        when(WifiConfigurationUtil.calculatePersistentMacForConfiguration(
+                any(), any())).thenReturn(null);
+
+        // Try adding a network.
+        WifiConfiguration openNetwork = WifiConfigurationTestUtil.createOpenNetwork();
+        List<WifiConfiguration> networks = new ArrayList<>();
+        networks.add(openNetwork);
+        verifyAddNetworkToWifiConfigManager(openNetwork);
+        List<WifiConfiguration> retrievedNetworks =
+                mWifiConfigManager.getConfiguredNetworksWithPasswords();
+
+        // Verify that despite KeyStore returning null, we are still getting a valid MAC address.
+        assertEquals(1, retrievedNetworks.size());
+        assertNotEquals(WifiInfo.DEFAULT_MAC_ADDRESS,
+                retrievedNetworks.get(0).getRandomizedMacAddress().toString());
     }
 
     /**
@@ -367,6 +407,7 @@ public class WifiConfigManagerTest {
      */
     @Test
     public void testAddingNetworkWithMatchingMacAddressOverridesField() {
+        int prevMappingSize = mWifiConfigManager.getRandomizedMacAddressMappingSize();
         WifiConfiguration openNetwork = WifiConfigurationTestUtil.createOpenNetwork();
         Map<String, String> randomizedMacAddressMapping = new HashMap<>();
         final String randMac = "12:23:34:45:56:67";
@@ -381,6 +422,9 @@ public class WifiConfigManagerTest {
         List<WifiConfiguration> retrievedNetworks =
                 mWifiConfigManager.getConfiguredNetworksWithPasswords();
         assertEquals(randMac, retrievedNetworks.get(0).getRandomizedMacAddress().toString());
+        // Verify that for networks that we already have randomizedMacAddressMapping saved
+        // we are still correctly writing into the WifiConfigStore.
+        assertEquals(prevMappingSize + 1, mWifiConfigManager.getRandomizedMacAddressMappingSize());
     }
 
     /**
@@ -390,6 +434,7 @@ public class WifiConfigManagerTest {
      */
     @Test
     public void testRandomizedMacAddressIsPersistedOverForgetNetwork() {
+        int prevMappingSize = mWifiConfigManager.getRandomizedMacAddressMappingSize();
         // Create and add an open network
         WifiConfiguration openNetwork = WifiConfigurationTestUtil.createOpenNetwork();
         verifyAddNetworkToWifiConfigManager(openNetwork);
@@ -409,6 +454,8 @@ public class WifiConfigManagerTest {
         verifyAddNetworkToWifiConfigManager(openNetwork);
         retrievedNetworks = mWifiConfigManager.getConfiguredNetworksWithPasswords();
         assertEquals(randMac, retrievedNetworks.get(0).getRandomizedMacAddress().toString());
+        // Verify that we are no longer persisting the randomized MAC address with WifiConfigStore.
+        assertEquals(prevMappingSize, mWifiConfigManager.getRandomizedMacAddressMappingSize());
     }
 
     /**
@@ -631,13 +678,14 @@ public class WifiConfigManagerTest {
      */
     @Test
     public void testAddSingleSuggestionNetwork() throws Exception {
-        WifiConfiguration suggestionNetwork = WifiConfigurationTestUtil.createOpenNetwork();
+        WifiConfiguration suggestionNetwork = WifiConfigurationTestUtil.createEapNetwork();
         suggestionNetwork.ephemeral = true;
         suggestionNetwork.fromWifiNetworkSuggestion = true;
         List<WifiConfiguration> networks = new ArrayList<>();
         networks.add(suggestionNetwork);
 
         verifyAddSuggestionOrRequestNetworkToWifiConfigManager(suggestionNetwork);
+        verify(mWifiKeyStore, never()).updateNetworkKeys(any(), any());
 
         List<WifiConfiguration> retrievedNetworks =
                 mWifiConfigManager.getConfiguredNetworksWithPasswords();
@@ -647,6 +695,9 @@ public class WifiConfigManagerTest {
         // Ensure that this is not returned in the saved network list.
         assertTrue(mWifiConfigManager.getSavedNetworks(Process.WIFI_UID).isEmpty());
         verify(mWcmListener, never()).onSavedNetworkAdded(suggestionNetwork.networkId);
+        assertTrue(mWifiConfigManager
+                .removeNetwork(suggestionNetwork.networkId, TEST_CREATOR_UID));
+        verify(mWifiKeyStore, never()).removeKeys(any());
     }
 
     /**
@@ -4289,10 +4340,12 @@ public class WifiConfigManagerTest {
     @Test
     public void testResetSimNetworks() {
         String expectedIdentity = "13214561234567890@wlan.mnc456.mcc321.3gppnetwork.org";
-        when(mDataTelephonyManager.getSubscriberId()).thenReturn("3214561234567890");
-        when(mDataTelephonyManager.getSimState()).thenReturn(TelephonyManager.SIM_STATE_READY);
-        when(mDataTelephonyManager.getSimOperator()).thenReturn("321456");
-        when(mDataTelephonyManager.getCarrierInfoForImsiEncryption(anyInt())).thenReturn(null);
+        when(mSubscriptionManager.getSubscriptionIds(TEST_SIM_SLOT)).thenReturn(TEST_SUB_ID);
+        when(mTelephonyManager.getSubscriberId(TEST_SUB_ID[0])).thenReturn("3214561234567890");
+        when(mTelephonyManager.getSimState(TEST_SIM_SLOT)).
+                thenReturn(TelephonyManager.SIM_STATE_READY);
+        when(mTelephonyManager.getSimOperator(TEST_SUB_ID[0])).thenReturn("321456");
+        when(mTelephonyManager.getCarrierInfoForImsiEncryption(anyInt())).thenReturn(null);
 
         WifiConfiguration network = WifiConfigurationTestUtil.createEapNetwork();
         WifiConfiguration simNetwork = WifiConfigurationTestUtil.createEapNetwork(
@@ -4303,26 +4356,46 @@ public class WifiConfigManagerTest {
         network.enterpriseConfig.setAnonymousIdentity("anonymous_identity1");
         simNetwork.enterpriseConfig.setIdentity("identity2");
         simNetwork.enterpriseConfig.setAnonymousIdentity("anonymous_identity2");
+        simNetwork.enterpriseConfig.setSimNum(TEST_SIM_SLOT);
         peapSimNetwork.enterpriseConfig.setIdentity("identity3");
         peapSimNetwork.enterpriseConfig.setAnonymousIdentity("anonymous_identity3");
+        peapSimNetwork.enterpriseConfig.setSimNum(TEST_SIM_SLOT);
         verifyAddNetworkToWifiConfigManager(network);
         verifyAddNetworkToWifiConfigManager(simNetwork);
         verifyAddNetworkToWifiConfigManager(peapSimNetwork);
 
+        // Verify SIM is not present initially.
+        assertFalse(mWifiConfigManager.isSimPresent(TEST_SIM_SLOT));
+
         // SIM was removed, resetting SIM Networks
-        mWifiConfigManager.resetSimNetworks();
+        mWifiConfigManager.resetSimNetworks(false, TEST_SIM_SLOT);
+
+        // Call resetSimNetworks with true(SIM is present)
+        mWifiConfigManager.resetSimNetworks(true, TEST_SIM_SLOT);
+
+        // Verify SIM is present, SIM configs are reset and non-SIM configs are not changed.
+        assertTrue(mWifiConfigManager.isSimPresent(TEST_SIM_SLOT));
 
         // Verify SIM configs are reset and non-SIM configs are not changed.
+        assertFalse(retrievedPeapSimNetwork.enterpriseConfig.getAnonymousIdentity().isEmpty());
+
+        // Call resetSimNetworks with false(SIM is not present).
+        when(mTelephonyManager.getSubscriberId(TEST_SUB_ID[0])).thenReturn("3214561234567891");
+        retrievedSimNetwork.enterpriseConfig.setAnonymousIdentity("anonymous_identity22");
+        verifyUpdateNetworkToWifiConfigManagerWithoutIpChange(retrievedSimNetwork);
+        mWifiConfigManager.resetSimNetworks(false, TEST_SIM_SLOT);
+
+        // Verify SIM is not present and all configs are not changed.
+        assertFalse(mWifiConfigManager.isSimPresent(TEST_SIM_SLOT));
         WifiConfigurationTestUtil.assertConfigurationEqualForConfigManagerAddOrUpdate(
                 network,
                 mWifiConfigManager.getConfiguredNetworkWithPassword(network.networkId));
-        WifiConfiguration retrievedSimNetwork =
-                mWifiConfigManager.getConfiguredNetwork(simNetwork.networkId);
-        assertEquals("", retrievedSimNetwork.enterpriseConfig.getAnonymousIdentity());
-        assertEquals("", retrievedSimNetwork.enterpriseConfig.getIdentity());
-        WifiConfiguration retrievedPeapSimNetwork =
-                mWifiConfigManager.getConfiguredNetwork(peapSimNetwork.networkId);
-        assertEquals(expectedIdentity, retrievedPeapSimNetwork.enterpriseConfig.getIdentity());
+        WifiConfigurationTestUtil.assertConfigurationEqualForConfigManagerAddOrUpdate(
+                retrievedSimNetwork,
+                mWifiConfigManager.getConfiguredNetworkWithPassword(simNetwork.networkId));
+        WifiConfigurationTestUtil.assertConfigurationEqualForConfigManagerAddOrUpdate(
+                retrievedPeapSimNetwork,
+                mWifiConfigManager.getConfiguredNetworkWithPassword(peapSimNetwork.networkId));
         assertNotEquals("", retrievedPeapSimNetwork.enterpriseConfig.getAnonymousIdentity());
     }
 
@@ -4358,8 +4431,13 @@ public class WifiConfigManagerTest {
         simNetwork.enterpriseConfig.setAnonymousIdentity("anonymous_identity_eap_sim");
         verifyAddNetworkToWifiConfigManager(simNetwork);
 
-        // SIM was removed, resetting SIM Networks
-        mWifiConfigManager.resetSimNetworks();
+        assertFalse(mWifiConfigManager.isSimPresent(TEST_SIM_SLOT));
+
+        mWifiConfigManager.resetSimNetworks(true, TEST_SIM_SLOT);
+        assertTrue(mWifiConfigManager.isSimPresent(TEST_SIM_SLOT));
+
+        mWifiConfigManager.resetSimNetworks(false, TEST_SIM_SLOT);
+        assertFalse(mWifiConfigManager.isSimPresent(TEST_SIM_SLOT));
 
         // EAP non-SIM network should be unchanged
         WifiConfigurationTestUtil.assertConfigurationEqualForConfigManagerAddOrUpdate(
@@ -4381,6 +4459,16 @@ public class WifiConfigManagerTest {
      * Verifies that SIM configs are reset on {@link WifiConfigManager#loadFromStore()}.
      */
     @Test
+    public void testResetSimNetworksIsCalledAgainAfterLoadFromStore() {
+        String expectedIdentity = "13214561234567890@wlan.mnc456.mcc321.3gppnetwork.org";
+        when(mSubscriptionManager.getSubscriptionIds(TEST_SIM_SLOT)).thenReturn(TEST_SUB_ID);
+        when(mTelephonyManager.getSubscriberId(TEST_SUB_ID[0])).thenReturn("3214561234567890");
+        when(mTelephonyManager.getSimState(TEST_SIM_SLOT)).
+                thenReturn(TelephonyManager.SIM_STATE_READY);
+        when(mTelephonyManager.getSimOperator(TEST_SUB_ID[0])).thenReturn("321456");
+        when(mTelephonyManager.getCarrierInfoForImsiEncryption(anyInt())).thenReturn(null);
+    }
+
     public void testLoadFromStoreResetsSimIdentity() {
         when(mDataTelephonyManager.getSubscriberId()).thenReturn("3214561234567890");
         when(mDataTelephonyManager.getSimState()).thenReturn(TelephonyManager.SIM_STATE_READY);
@@ -4391,11 +4479,13 @@ public class WifiConfigManagerTest {
                 WifiEnterpriseConfig.Eap.SIM, WifiEnterpriseConfig.Phase2.NONE);
         simNetwork.enterpriseConfig.setIdentity("identity");
         simNetwork.enterpriseConfig.setAnonymousIdentity("anonymous_identity");
+        simNetwork.enterpriseConfig.setSimNum(TEST_SIM_SLOT);
 
         WifiConfiguration peapSimNetwork = WifiConfigurationTestUtil.createEapNetwork(
                 WifiEnterpriseConfig.Eap.PEAP, WifiEnterpriseConfig.Phase2.NONE);
         peapSimNetwork.enterpriseConfig.setIdentity("identity");
         peapSimNetwork.enterpriseConfig.setAnonymousIdentity("anonymous_identity");
+        peapSimNetwork.enterpriseConfig.setSimNum(TEST_SIM_SLOT);
 
         // Set up the store data.
         List<WifiConfiguration> sharedNetworks = new ArrayList<WifiConfiguration>() {
@@ -4406,17 +4496,33 @@ public class WifiConfigManagerTest {
         };
         setupStoreDataForRead(sharedNetworks, new ArrayList<>(), new HashMap<>());
 
-        // read from store now
+        // 1. Call resetSimNetworks with true(SIM is present).
+        mWifiConfigManager.resetSimNetworks(true, TEST_SIM_SLOT);
+
+        // Verify SIM is present.
+        assertTrue(mWifiConfigManager.isSimPresent(TEST_SIM_SLOT));
+
+        // 2. Read from store now
         assertTrue(mWifiConfigManager.loadFromStore());
+
+        // Verify SIM is present just in case and SIM config is reset.
+        assertTrue(mWifiConfigManager.isSimPresent(TEST_SIM_SLOT));
 
         // assert that the expected identities are reset
         WifiConfiguration retrievedSimNetwork =
                 mWifiConfigManager.getConfiguredNetwork(simNetwork.networkId);
+        assertTrue(retrievedSimNetwork.enterpriseConfig.getIdentity().isEmpty());
+        assertTrue(retrievedSimNetwork.enterpriseConfig.getAnonymousIdentity().isEmpty());
+        assertEquals(retrievedSimNetwork.enterpriseConfig.getSimNum(), TEST_SIM_SLOT);
+
         assertEquals("", retrievedSimNetwork.enterpriseConfig.getIdentity());
         assertEquals("", retrievedSimNetwork.enterpriseConfig.getAnonymousIdentity());
 
         WifiConfiguration retrievedPeapNetwork =
                 mWifiConfigManager.getConfiguredNetwork(peapSimNetwork.networkId);
+        assertEquals(retrievedPeapNetwork.enterpriseConfig.getIdentity(), "identity");
+        assertFalse(retrievedPeapNetwork.enterpriseConfig.getAnonymousIdentity().isEmpty());
+        assertEquals(retrievedSimNetwork.enterpriseConfig.getSimNum(), TEST_SIM_SLOT);
         assertEquals("identity", retrievedPeapNetwork.enterpriseConfig.getIdentity());
         assertEquals("anonymous_identity",
                 retrievedPeapNetwork.enterpriseConfig.getAnonymousIdentity());
@@ -4560,7 +4666,7 @@ public class WifiConfigManagerTest {
     private void createWifiConfigManager() {
         mWifiConfigManager =
                 new WifiConfigManager(
-                        mContext, mClock, mUserManager, mTelephonyManager,
+                        mContext, mClock, mUserManager, mTelephonyManager, mSubscriptionManager,
                         mWifiKeyStore, mWifiConfigStore,
                         mWifiPermissionsUtil, mWifiPermissionsWrapper, mWifiInjector,
                         mNetworkListSharedStoreData, mNetworkListUserStoreData,

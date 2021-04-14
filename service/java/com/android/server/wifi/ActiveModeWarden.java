@@ -122,6 +122,10 @@ public class ActiveModeWarden {
         mClientModeCallback = callback;
     }
 
+    public void registerStaEventCallback() { }
+
+    public void unregisterStaEventCallback() {}
+
     ActiveModeWarden(WifiInjector wifiInjector,
                      Context context,
                      Looper looper,
@@ -490,6 +494,7 @@ public class ActiveModeWarden {
                         // scan mode is ready to go
                         Log.d(TAG, "scan mode active");
                         onModeActivationComplete();
+                        com.mediatek.server.wifi.MtkScanModeNotifier.setScanMode(true);
                     } else {
                         Log.d(TAG, "unexpected state update: " + state);
                     }
@@ -513,6 +518,7 @@ public class ActiveModeWarden {
             public void exit() {
                 super.exit();
                 mListener = null;
+                com.mediatek.server.wifi.MtkScanModeNotifier.setScanMode(false);
             }
 
             @Override

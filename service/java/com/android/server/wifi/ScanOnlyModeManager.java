@@ -255,8 +255,10 @@ public class ScanOnlyModeManager implements ActiveModeManager {
                         onUpChanged(isUp);
                         break;
                     case CMD_INTERFACE_DOWN:
-                        Log.d(TAG, "interface down!  stop mode");
-                        updateWifiState(WifiManager.WIFI_STATE_UNKNOWN);
+                        Log.d(TAG, "interface down!  restart scan mode");
+                        //updateWifiState(WifiManager.WIFI_STATE_UNKNOWN);
+                        WifiInjector.getInstance().
+                                getSelfRecovery().trigger(SelfRecovery.REASON_STA_IFACE_DOWN);
                         transitionTo(mIdleState);
                         break;
                     default:

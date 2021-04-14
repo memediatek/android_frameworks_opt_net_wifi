@@ -66,6 +66,7 @@ import com.android.internal.util.HexDump;
 import com.android.server.wifi.HalDeviceManager.InterfaceDestroyedListener;
 import com.android.server.wifi.WifiLinkLayerStats.ChannelStats;
 import com.android.server.wifi.util.BitMask;
+import com.android.server.wifi.util.GbkUtil;
 import com.android.server.wifi.util.NativeUtil;
 
 import com.google.errorprone.annotations.CompileTimeConstant;
@@ -2617,6 +2618,7 @@ public class WifiVendorHal {
         frameworkScanResult.SSID = NativeUtil.encodeSsid(scanResult.ssid);
         frameworkScanResult.wifiSsid =
                 WifiSsid.createFromByteArray(NativeUtil.byteArrayFromArrayList(scanResult.ssid));
+        GbkUtil.checkAndSetGbk(frameworkScanResult.wifiSsid);
         frameworkScanResult.BSSID = NativeUtil.macAddressFromByteArray(scanResult.bssid);
         frameworkScanResult.level = scanResult.rssi;
         frameworkScanResult.frequency = scanResult.frequency;

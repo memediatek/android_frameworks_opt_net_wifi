@@ -69,6 +69,8 @@ public class HostapdHal {
     private HostapdDeathRecipient mHostapdDeathRecipient;
     // Death recipient cookie registered for current supplicant instance.
     private long mDeathRecipientCookie = 0;
+    // M: STA+SAP concurrent
+    private Context mContext;
 
     private final IServiceNotification mServiceNotificationCallback =
             new IServiceNotification.Stub() {
@@ -121,6 +123,8 @@ public class HostapdHal {
 
         mServiceManagerDeathRecipient = new ServiceManagerDeathRecipient();
         mHostapdDeathRecipient = new HostapdDeathRecipient();
+        // M: STA+SAP concurrent
+        mContext = context;
     }
 
     /**
@@ -317,7 +321,11 @@ public class HostapdHal {
                 Log.e(TAG, "Unrecognized apBand " + config.apBand);
                 return false;
             }
-            if (mEnableAcs) {
+            // M: Overwrite channel params for STA+SAP
+            if (com.mediatek.server.wifi.MtkSoftApUtils.overwriteApChannelIfNeed(mContext,
+                    ifaceParams)) {
+                // do nothing since channel params. are already overwritten
+            } else if (mEnableAcs) {
                 ifaceParams.channelParams.enableAcs = true;
                 ifaceParams.channelParams.acsShouldExcludeDfs = true;
             } else {
@@ -367,7 +375,26 @@ public class HostapdHal {
             } catch (RemoteException e) {
                 handleRemoteException(e, methodStr);
                 return false;
+            } catch (IllegalArgumentException e) {
+                Log.d(TAG, "ssid: " + nwParams.ssid +
+                    ", isHidden: " + nwParams.isHidden +
+                    ", encryptionType: " + nwParams.encryptionType +
+                    ", pskPassphrase: " + nwParams.pskPassphrase);
+                Log.d(TAG, "ifaceName: " + ifaceParams.ifaceName +
+                    ", N: " + ifaceParams.hwModeParams.enable80211N +
+                    ", AC: " + ifaceParams.hwModeParams.enable80211AC +
+                    ", band: " + ifaceParams.channelParams.band +
+                    ", enableAcs: " + ifaceParams.channelParams.enableAcs +
+                    ", Dfs: " + ifaceParams.channelParams.acsShouldExcludeDfs +
+                    ", channel: " + ifaceParams.channelParams.channel);
+                synchronized (mLock) {
+                    hostapdServiceDiedHandler(mDeathRecipientCookie);
+                    Log.e(TAG, "IHostapd." + methodStr +
+                        " failed with exception", e);
+                }
+                return false;
             }
+
         }
     }
 

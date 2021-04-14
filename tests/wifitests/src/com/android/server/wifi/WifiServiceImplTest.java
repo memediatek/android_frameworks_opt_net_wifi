@@ -90,6 +90,7 @@ import android.net.wifi.IDppCallback;
 import android.net.wifi.INetworkRequestMatchCallback;
 import android.net.wifi.IOnWifiUsabilityStatsListener;
 import android.net.wifi.ISoftApCallback;
+import android.net.wifi.IStaStateCallback;
 import android.net.wifi.ITrafficStateCallback;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiConfiguration;
@@ -168,6 +169,7 @@ public class WifiServiceImplTest {
     private static final int OTHER_TEST_UID = 1300000;
     private static final int TEST_USER_HANDLE = 13;
     private static final int TEST_TRAFFIC_STATE_CALLBACK_IDENTIFIER = 17;
+    private static final int TEST_STA_STATE_CALLBACK_IDENTIFIER = 18;
     private static final int TEST_NETWORK_REQUEST_MATCH_CALLBACK_IDENTIFIER = 234;
     private static final int TEST_WIFI_USABILITY_STATS_LISTENER_IDENTIFIER = 2;
     private static final String WIFI_IFACE_NAME = "wlan0";
@@ -219,7 +221,9 @@ public class WifiServiceImplTest {
     @Mock WifiController mWifiController;
     @Mock WifiTrafficPoller mWifiTrafficPoller;
     @Mock ClientModeImpl mClientModeImpl;
-    @Mock ActiveModeWarden mActiveModeWarden;
+    @Mock ActiveModeWardenForDeferRequest mActiveModeWarden;
+    @Mock WifiStaStateNotifier mWifiStaStateNotifier;
+    @Mock IStaStateCallback mStaStateCallback;
     @Mock HandlerThread mHandlerThread;
     @Mock Resources mResources;
     @Mock FrameworkFacade mFrameworkFacade;
@@ -343,6 +347,7 @@ public class WifiServiceImplTest {
         when(mClientModeImpl.syncInitialize(any())).thenReturn(true);
         when(mClientModeImpl.getHandler()).thenReturn(new Handler());
         when(mWifiInjector.getActiveModeWarden()).thenReturn(mActiveModeWarden);
+        when(mWifiInjector.getWifiStaStateNotifier()).thenReturn(mWifiStaStateNotifier);
         when(mWifiInjector.getWifiServiceHandlerThread()).thenReturn(mHandlerThread);
         when(mWifiInjector.getPowerProfile()).thenReturn(mPowerProfile);
         when(mHandlerThread.getLooper()).thenReturn(mLooper.getLooper());
@@ -3403,6 +3408,79 @@ public class WifiServiceImplTest {
         mWifiServiceImpl.unregisterTrafficStateCallback(0);
         mLooper.dispatchAll();
         verify(mWifiTrafficPoller).removeCallback(0);
+    }
+
+    /**
+     * Verify that a call to registerStaStateCallback throws a SecurityException if the caller
+     * does not have NETWORK_SETTINGS permission.
+     */
+    @Test
+    public void registerStaStateCallbackThrowsSecurityExceptionOnMissingPermissions() {
+        doThrow(new SecurityException()).when(mContext)
+                .enforceCallingOrSelfPermission(eq(android.Manifest.permission.NETWORK_SETTINGS),
+                        eq("WifiService"));
+        try {
+            mWifiServiceImpl.registerStaStateCallback(mAppBinder, mStaStateCallback,
+                    TEST_STA_STATE_CALLBACK_IDENTIFIER);
+            fail("expected SecurityException");
+        } catch (SecurityException expected) {
+        }
+    }
+
+    /**
+     * Verify that a call to registerStaStateCallback throws an IllegalArgumentException if the
+     * parameters are not provided.
+     */
+    @Test
+    public void registerStaStateCallbackThrowsIllegalArgumentExceptionOnInvalidArguments() {
+        try {
+            mWifiServiceImpl.registerStaStateCallback(
+                    mAppBinder, null, TEST_STA_STATE_CALLBACK_IDENTIFIER);
+            fail("expected IllegalArgumentException");
+        } catch (IllegalArgumentException expected) {
+        }
+    }
+
+    /**
+     * Verify that a call to unregisterStaStateCallback throws a SecurityException if the caller
+     * does not have NETWORK_SETTINGS permission.
+     */
+    @Test
+    public void unregisterStaStateCallbackThrowsSecurityExceptionOnMissingPermissions() {
+        doThrow(new SecurityException()).when(mContext)
+                .enforceCallingOrSelfPermission(eq(android.Manifest.permission.NETWORK_SETTINGS),
+                        eq("WifiService"));
+        try {
+            mWifiServiceImpl.unregisterStaStateCallback(TEST_STA_STATE_CALLBACK_IDENTIFIER);
+            fail("expected SecurityException");
+        } catch (SecurityException expected) {
+        }
+    }
+
+    /**
+     * Verify that registerStaStateCallbackAndVerify adds callback to {@link WifiStaStateNotifier}.
+     */
+    @Test
+    public void registerStaStateCallbackAndVerify() throws Exception {
+        setupClientModeImplHandlerForPost();
+
+        mWifiServiceImpl.registerStaStateCallback(
+                mAppBinder, mStaStateCallback, TEST_STA_STATE_CALLBACK_IDENTIFIER);
+        mLooper.dispatchAll();
+        verify(mWifiStaStateNotifier).addCallback(
+                mAppBinder, mStaStateCallback, TEST_STA_STATE_CALLBACK_IDENTIFIER);
+    }
+
+    /**
+     * Verify that unregisterStaStateCallback removes callback from {@link WifiStaStateNotifier}.
+     */
+    @Test
+    public void unregisterStaStateCallbackAndVerify() throws Exception {
+        setupClientModeImplHandlerForPost();
+
+        mWifiServiceImpl.unregisterStaStateCallback(TEST_STA_STATE_CALLBACK_IDENTIFIER);
+        mLooper.dispatchAll();
+        verify(mWifiStaStateNotifier).removeCallback(TEST_STA_STATE_CALLBACK_IDENTIFIER);
     }
 
     /**

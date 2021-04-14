@@ -83,6 +83,7 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
 
     private void localLog(String message) {
         mLocalLog.log(message);
+        Log.d(TAG, message);
     }
 
     private void logw(String message) {
@@ -2264,6 +2265,14 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
         if (scanSettings.channels != null) {
             for (int i = 0; i < scanSettings.channels.length; i++) {
                 sb.append(scanSettings.channels[i].frequency)
+                  .append(" ");
+            }
+        }
+        sb.append(" ] ")
+          .append(" hiddenNetworks:[ ");
+        if (scanSettings.hiddenNetworks != null) {
+            for (int i = 0; i < scanSettings.hiddenNetworks.length; i++) {
+                sb.append(scanSettings.hiddenNetworks[i].ssid)
                   .append(" ");
             }
         }

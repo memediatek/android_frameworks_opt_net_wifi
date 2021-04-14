@@ -70,6 +70,8 @@ public class WifiMonitor {
     public static final int WPS_OVERLAP_EVENT                    = BASE + 10;
      /* WPS timeout detected */
     public static final int WPS_TIMEOUT_EVENT                    = BASE + 11;
+    /* M: Notify the frequency changed of associated AP */
+    public static final int NETWORK_FREQUENCY_CHANGED            = BASE + 12;
 
     /* Request Identity */
     public static final int SUP_REQUEST_IDENTITY                 = BASE + 15;
@@ -543,5 +545,9 @@ public class WifiMonitor {
      */
     public void broadcastSupplicantDisconnectionEvent(String iface) {
         sendMessage(iface, SUP_DISCONNECTION_EVENT);
+    }
+
+    public void broadcastAssocFreqChanged(String iface, int freq) {
+        sendMessage(iface, NETWORK_FREQUENCY_CHANGED, freq);
     }
 }

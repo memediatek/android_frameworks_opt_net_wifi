@@ -27,11 +27,14 @@ import android.os.RemoteException;
 import android.text.TextUtils;
 import android.util.Log;
 import android.util.MutableBoolean;
+import android.util.MutableInt;
 
 import com.android.internal.R;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.ArrayUtils;
 import com.android.server.wifi.util.NativeUtil;
+
+import com.mediatek.server.wifi.MtkWapi;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -48,7 +51,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import javax.annotation.concurrent.ThreadSafe;
-
 
 /**
  * Wrapper class for ISupplicantStaNetwork HAL calls. Gets and sets supplicant sta network variables
@@ -306,10 +308,33 @@ public class SupplicantStaNetworkHal {
                     if (config.allowedKeyManagement.get(WifiConfiguration.KeyMgmt.SAE)) {
                         return false;
                     }
-                    if (!setPsk(NativeUtil.hexStringToByteArray(config.preSharedKey))) {
+                    /// M: [WAPI] Add quotes for recognizing WAPI hex pre-shared key
+                    /// since WAPI Hex doesn't specify hex length and setPsk() only accepts 32bytes
+                    if (MtkWapi.isWapiPskConfiguration(config)) {
+                        if (!setPskPassphrase(NativeUtil.addEnclosingQuotes(config.preSharedKey))) {
+                            Log.e(TAG, "failed to set wapi psk passphrase");
+                            return false;
+                        }
+                    } else if (!setPsk(NativeUtil.hexStringToByteArray(config.preSharedKey))) {
                         Log.e(TAG, "failed to set psk");
                         return false;
                     }
+                }
+            }
+
+            ///M: [WAPI] If wapi type is auto selection, may need to update wapi alias list
+            if (MtkWapi.isWapiCertConfiguration(config) && config.wapiCertSel == null) {
+                if (!MtkWapi.updateWapiCertSelList(config)) {
+                    Log.e(TAG, "failed to set wapi certificate selection list");
+                    return false;
+                }
+            }
+
+            /// M:[WAPI] Set user selected alias to supplicant if any
+            if (MtkWapi.isWapiCertConfiguration(config)) {
+                if (!MtkWapi.setWapiCertAlias(this, getSupplicantNetworkId(), config.wapiCertSel)) {
+                    Log.e(TAG, "failed to set alias: " + config.wapiCertSel);
+                    return false;
                 }
             }
 
@@ -434,6 +459,31 @@ public class SupplicantStaNetworkHal {
             return true;
         }
     }
+
+    /** See ISupplicantNetwork.hal for documentation */
+    private int getSupplicantNetworkId() {
+        synchronized (mLock) {
+            final String methodStr = "getId";
+            if (!checkISupplicantStaNetworkAndLogFailure(methodStr)) return -1;
+            final MutableInt networkId = new MutableInt(-1);
+            try {
+                MutableBoolean statusOk = new MutableBoolean(false);
+                mISupplicantStaNetwork.getId((SupplicantStatus status, int idValue) -> {
+                    statusOk.value = status.code == SupplicantStatusCode.SUCCESS;
+                    if (statusOk.value) {
+                        networkId.value = idValue;
+                    } else {
+                        checkStatusAndLogFailure(status, methodStr);
+                    }
+                });
+            } catch (RemoteException e) {
+                handleRemoteException(e, methodStr);
+                return -1;
+            }
+            return networkId.value;
+        }
+    }
+
 
     /**
      * Check if Auth Alg is needed to be sent by wificonfiguration object
@@ -756,6 +806,14 @@ public class SupplicantStaNetworkHal {
                 case WifiConfiguration.KeyMgmt.WPA_EAP_SHA256:
                     mask |= android.hardware.wifi.supplicant.V1_2.ISupplicantStaNetwork.KeyMgmtMask
                             .WPA_EAP_SHA256;
+                ///M: [WAPI] Convert KeyMgmt for supplicant
+                case WifiConfiguration.KeyMgmt.WAPI_PSK:
+                    mask |= vendor.mediatek.hardware.wifi.supplicant.V2_0.ISupplicantStaNetwork.
+                            KeyMgmtMask.WAPI_PSK;
+                    break;
+                case WifiConfiguration.KeyMgmt.WAPI_CERT:
+                    mask |= vendor.mediatek.hardware.wifi.supplicant.V2_0.ISupplicantStaNetwork.
+                            KeyMgmtMask.WAPI_CERT;
                     break;
                 case WifiConfiguration.KeyMgmt.WPA2_PSK: // This should never happen
                 default:
@@ -779,6 +837,11 @@ public class SupplicantStaNetworkHal {
                     break;
                 case WifiConfiguration.Protocol.OSEN:
                     mask |= ISupplicantStaNetwork.ProtoMask.OSEN;
+                    break;
+                ///M: [WAPI] Convert Protocol for supplicant
+                case WifiConfiguration.Protocol.WAPI:
+                    mask |= vendor.mediatek.hardware.wifi.supplicant.V2_0.ISupplicantStaNetwork.
+                            ProtoMask.WAPI;
                     break;
                 default:
                     throw new IllegalArgumentException(
@@ -990,6 +1053,13 @@ public class SupplicantStaNetworkHal {
         mask = supplicantMaskValueToWifiConfigurationBitSet(
                 mask, android.hardware.wifi.supplicant.V1_2.ISupplicantStaNetwork.KeyMgmtMask
                         .WPA_EAP_SHA256, bitset, WifiConfiguration.KeyMgmt.WPA_EAP_SHA256);
+        ///M: [WAPI] Convert KeyMgmt for WifiConfiguration
+        mask = supplicantMaskValueToWifiConfigurationBitSet(
+                mask, vendor.mediatek.hardware.wifi.supplicant.V2_0.ISupplicantStaNetwork.
+                        KeyMgmtMask.WAPI_PSK, bitset, WifiConfiguration.KeyMgmt.WAPI_PSK);
+        mask = supplicantMaskValueToWifiConfigurationBitSet(
+                mask, vendor.mediatek.hardware.wifi.supplicant.V2_0.ISupplicantStaNetwork.
+                        KeyMgmtMask.WAPI_CERT, bitset, WifiConfiguration.KeyMgmt.WAPI_CERT);
         if (mask != 0) {
             throw new IllegalArgumentException(
                     "invalid key mgmt mask from supplicant: " + mask);
@@ -1008,6 +1078,11 @@ public class SupplicantStaNetworkHal {
         mask = supplicantMaskValueToWifiConfigurationBitSet(
                 mask, ISupplicantStaNetwork.ProtoMask.OSEN, bitset,
                 WifiConfiguration.Protocol.OSEN);
+        ///M: [WAPI] Convert Protocol for WifiConfiguration
+        mask = supplicantMaskValueToWifiConfigurationBitSet(
+                mask, vendor.mediatek.hardware.wifi.supplicant.V2_0.ISupplicantStaNetwork.
+                        ProtoMask.WAPI, bitset,
+                WifiConfiguration.Protocol.WAPI);
         if (mask != 0) {
             throw new IllegalArgumentException(
                     "invalid proto mask from supplicant: " + mask);
@@ -2963,6 +3038,10 @@ public class SupplicantStaNetworkHal {
             if (mISupplicantStaNetwork == null) {
                 Log.e(TAG, "Can't call " + methodStr + ", ISupplicantStaNetwork is null");
                 return false;
+            } else {
+                if (mVerboseLoggingEnabled) {
+                    Log.d(TAG, "Do ISupplicantStaNetwork." + methodStr);
+                }
             }
             return true;
         }

@@ -216,6 +216,7 @@ public class WifiNetworkSelector {
     // be retrieved in bugreport.
     private void localLog(String log) {
         mLocalLog.log(log);
+        android.util.Log.d(TAG, log);
     }
 
     private boolean isCurrentNetworkSufficient(WifiInfo wifiInfo, List<ScanDetail> scanDetails) {

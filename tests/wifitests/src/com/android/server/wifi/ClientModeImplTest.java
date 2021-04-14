@@ -3503,11 +3503,12 @@ public class ClientModeImplTest {
         startSupplicantAndDispatchMessages();
 
         // Indicate that sim is removed.
-        mCmi.sendMessage(ClientModeImpl.CMD_RESET_SIM_NETWORKS, false);
+        int TEST_SIM_SLOT = 1;
+        mCmi.sendMessage(ClientModeImpl.CMD_RESET_SIM_NETWORKS, 0, TEST_SIM_SLOT);
         mLooper.dispatchAll();
 
         verify(mPasspointManager).removeEphemeralProviders();
-        verify(mWifiConfigManager).resetSimNetworks();
+        verify(mWifiConfigManager).resetSimNetworks(eq(false), eq(TEST_SIM_SLOT));
     }
 
     /**

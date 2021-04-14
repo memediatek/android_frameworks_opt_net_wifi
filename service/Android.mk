@@ -36,6 +36,7 @@ LOCAL_JAVA_LIBRARIES := \
 	libprotobuf-java-lite \
 	jsr305 \
 	services
+
 LOCAL_STATIC_JAVA_LIBRARIES := \
 	android.hardware.wifi-V1.0-java \
 	android.hardware.wifi-V1.1-java \
@@ -48,7 +49,10 @@ LOCAL_STATIC_JAVA_LIBRARIES := \
 	android.hardware.wifi.supplicant-V1.2-java \
 	wifi_service_proto \
 	ksoap2 \
-	libnanohttpd
+	libnanohttpd \
+	vendor.mediatek.hardware.wifi.supplicant-V2.0-java \
+	vendor.mediatek.hardware.wifi.supplicant-V2.1-java \
+	services.powerhalmgrservice
 
 LOCAL_REQUIRED_MODULES := \
 	services \

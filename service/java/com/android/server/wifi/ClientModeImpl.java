@@ -121,6 +121,9 @@ import com.android.server.wifi.util.TelephonyUtil.SimAuthResponseData;
 import com.android.server.wifi.util.WifiPermissionsUtil;
 import com.android.server.wifi.util.WifiPermissionsWrapper;
 
+/// M: for OP extension
+import com.mediatek.server.wifi.MtkWifiServiceAdapter;
+
 import java.io.BufferedReader;
 import java.io.FileDescriptor;
 import java.io.FileNotFoundException;
@@ -752,6 +755,14 @@ public class ClientModeImpl extends StateMachine {
         return mTelephonyManager;
     }
 
+    private SubscriptionManager mSubscriptionManager;
+    private SubscriptionManager getSubscriptionManager() {
+        if (mSubscriptionManager == null) {
+            mSubscriptionManager = mWifiInjector.makeSubscriptionManager();
+        }
+        return mSubscriptionManager;
+    }
+
     private final IBatteryStats mBatteryStats;
 
     private final String mTcpBufferSizes;
@@ -959,6 +970,8 @@ public class ClientModeImpl extends StateMachine {
                 mWifiMetrics.getHandler());
         mWifiMonitor.registerHandler(mInterfaceName, CMD_TARGET_BSSID,
                 mWifiMetrics.getHandler());
+        mWifiMonitor.registerHandler(mInterfaceName, WifiMonitor.NETWORK_FREQUENCY_CHANGED,
+                getHandler());
     }
 
     private void setMulticastFilter(boolean enabled) {
@@ -1113,6 +1126,7 @@ public class ClientModeImpl extends StateMachine {
         mSupplicantStateTracker.enableVerboseLogging(verbose);
         mPasspointManager.enableVerboseLogging(verbose);
         mNetworkFactory.enableVerboseLogging(verbose);
+        mWifiConnectivityManager.mDbg = (verbose > 0) ? true : false;
         mLinkProbeManager.enableVerboseLogging(mVerboseLoggingEnabled);
     }
 
@@ -1917,8 +1931,8 @@ public class ClientModeImpl extends StateMachine {
     /**
      * reset cached SIM credential data
      */
-    public synchronized void resetSimAuthNetworks(boolean simPresent) {
-        sendMessage(CMD_RESET_SIM_NETWORKS, simPresent ? 1 : 0);
+    public synchronized void resetSimAuthNetworks(boolean simPresent, int simSlot) {
+        sendMessage(CMD_RESET_SIM_NETWORKS, simPresent ? 1 : 0, simSlot);
     }
 
     /**
@@ -2114,6 +2128,7 @@ public class ClientModeImpl extends StateMachine {
         String report;
         String key;
         StringBuilder sb = new StringBuilder();
+        sb.append(getWhatToString(msg.what)).append(" ");
         sb.append("screen=").append(mScreenOn ? "on" : "off");
         if (mMessageHandlingStatus != MESSAGE_HANDLING_STATUS_UNKNOWN) {
             sb.append("(").append(mMessageHandlingStatus).append(")");
@@ -2713,6 +2728,10 @@ public class ClientModeImpl extends StateMachine {
             mWifiInfo.setRssi(WifiInfo.INVALID_RSSI);
             updateCapabilities();
         }
+
+        /// M: for OP extension
+        MtkWifiServiceAdapter.updateRSSI(newRssi, mWifiInfo.getIpAddress(), mLastNetworkId);
+
         /*
          * set Tx link speed only if it is valid
          */
@@ -3373,12 +3392,14 @@ public class ClientModeImpl extends StateMachine {
             Log.e(TAG, "No config to change MAC address to");
             return;
         }
-        MacAddress currentMac = MacAddress.fromString(mWifiNative.getMacAddress(mInterfaceName));
+        String currentMacString = mWifiNative.getMacAddress(mInterfaceName);
+        MacAddress currentMac = currentMacString == null ? null :
+                MacAddress.fromString(currentMacString);
         MacAddress newMac = config.getOrCreateRandomizedMacAddress();
         mWifiConfigManager.setNetworkRandomizedMacAddress(config.networkId, newMac);
         if (!WifiConfiguration.isValidMacAddressForRandomization(newMac)) {
             Log.wtf(TAG, "Config generated an invalid MAC address");
-        } else if (currentMac.equals(newMac)) {
+        } else if (newMac.equals(currentMac)) {
             Log.d(TAG, "No changes in MAC address");
         } else {
             mWifiMetrics.logStaEvent(StaEvent.TYPE_MAC_CHANGE, config);
@@ -3386,7 +3407,7 @@ public class ClientModeImpl extends StateMachine {
                     mWifiNative.setMacAddress(mInterfaceName, newMac);
             Log.d(TAG, "ConnectedMacRandomization SSID(" + config.getPrintableSsid()
                     + "). setMacAddress(" + newMac.toString() + ") from "
-                    + currentMac.toString() + " = " + setMacSuccess);
+                    + currentMacString + " = " + setMacSuccess);
         }
     }
 
@@ -3945,15 +3966,22 @@ public class ClientModeImpl extends StateMachine {
         public boolean processMessage(Message message) {
             WifiConfiguration config;
             int netId;
-            boolean ok;
+            /// M: for OP extension
+            boolean ok = false;
             boolean didDisconnect;
             String bssid;
             String ssid;
-            NetworkUpdateResult result;
+            /// M: for OP extension
+            NetworkUpdateResult result = null;
             Set<Integer> removedNetworkIds;
             int reasonCode;
             boolean timedOut;
             boolean handleStatus = HANDLED;
+
+            /// M: for OP extension
+            if (MtkWifiServiceAdapter.preProcessMessage(this, message)) {
+                return HANDLED;
+            }
 
             switch (message.what) {
                 case WifiMonitor.ASSOCIATION_REJECTION_EVENT:
@@ -4157,6 +4185,7 @@ public class ClientModeImpl extends StateMachine {
                         // Pair<identity, encrypted identity>
                         Pair<String, String> identityPair =
                                 TelephonyUtil.getSimIdentity(getTelephonyManager(),
+                                        getSubscriptionManager(),
                                         new TelephonyUtil(), mTargetWifiConfiguration,
                                         mWifiInjector.getCarrierNetworkConfig());
                         Log.i(TAG, "SUP_REQUEST_IDENTITY: identityPair=" + identityPair);
@@ -4545,12 +4574,14 @@ public class ClientModeImpl extends StateMachine {
                     replyToMessage(message, message.what, stats);
                     break;
                 case CMD_RESET_SIM_NETWORKS:
-                    log("resetting EAP-SIM/AKA/AKA' networks since SIM was changed");
+                    if (mVerboseLoggingEnabled) {
+                        log("resetting EAP-SIM/AKA/AKA' networks since SIM was changed");
+                    }
                     boolean simPresent = message.arg1 == 1;
                     if (!simPresent) {
                         mPasspointManager.removeEphemeralProviders();
-                        mWifiConfigManager.resetSimNetworks();
                     }
+                    mWifiConfigManager.resetSimNetworks(simPresent, message.arg2);
                     break;
                 case CMD_BLUETOOTH_ADAPTER_STATE_CHANGE:
                     mBluetoothConnectionActive = (message.arg1
@@ -4619,6 +4650,8 @@ public class ClientModeImpl extends StateMachine {
                 logStateAndMessage(message, this);
             }
 
+            /// M: for OP extension
+            MtkWifiServiceAdapter.postProcessMessage(this, message, ok, result);
             return handleStatus;
         }
     }
@@ -5194,7 +5227,8 @@ public class ClientModeImpl extends StateMachine {
                             && mLastNetworkId != WifiConfiguration.INVALID_NETWORK_ID) {
                         WifiConfiguration config =
                                 mWifiConfigManager.getConfiguredNetwork(mLastNetworkId);
-                        if (TelephonyUtil.isSimConfig(config)) {
+                        if (TelephonyUtil.isSimConfig(config)
+                                && message.arg2 == TelephonyUtil.getSimSlot(config)) {
                             mWifiMetrics.logStaEvent(StaEvent.TYPE_FRAMEWORK_DISCONNECT,
                                     StaEvent.DISCONNECT_RESET_SIM_NETWORKS);
                             // TODO(b/132385576): STA may immediately connect back to the network
@@ -5237,6 +5271,10 @@ public class ClientModeImpl extends StateMachine {
                     }
                     break;
                 }
+                case WifiMonitor.NETWORK_FREQUENCY_CHANGED:
+                    mWifiInfo.setFrequency((int) message.arg1);
+                    sendNetworkStateChangeBroadcast(mLastBssid);
+                    break;
                 default:
                     handleStatus = NOT_HANDLED;
                     break;
@@ -5365,6 +5403,12 @@ public class ClientModeImpl extends StateMachine {
 
             switch(message.what) {
                 case CMD_START_CONNECT:
+                    int netId = message.arg1;
+                    if (netId != mLastNetworkId) {
+                        Log.d(TAG, "Allow different connection attempt in ObtainingIpState");
+                        handleStatus = NOT_HANDLED;
+                        break;
+                    }
                 case CMD_START_ROAM:
                     mMessageHandlingStatus = MESSAGE_HANDLING_STATUS_DISCARD;
                     break;
@@ -6045,16 +6089,20 @@ public class ClientModeImpl extends StateMachine {
          * 3. 3GPP TS 11.11  2G_authentication [RAND]
          *                            [SRES][Cipher Key Kc]
          */
+        WifiConfiguration config = mWifiConfigManager.getConfiguredNetwork(requestData.networkId);
+        int simSlot = TelephonyUtil.getSimSlot(config);
+        int subId = TelephonyUtil.getSubId(getSubscriptionManager(), simSlot);
         String response =
-                TelephonyUtil.getGsmSimAuthResponse(requestData.data, getTelephonyManager());
+                TelephonyUtil.getGsmSimAuthResponse(requestData.data, subId,
+                        getTelephonyManager());
         if (response == null) {
             // In case of failure, issue may be due to sim type, retry as No.2 case
             response = TelephonyUtil.getGsmSimpleSimAuthResponse(requestData.data,
-                    getTelephonyManager());
+                    subId, getTelephonyManager());
             if (response == null) {
                 // In case of failure, issue may be due to sim type, retry as No.3 case
                 response = TelephonyUtil.getGsmSimpleSimNoLengthAuthResponse(requestData.data,
-                        getTelephonyManager());
+                        subId, getTelephonyManager());
             }
         }
         if (response == null || response.length() == 0) {
@@ -6077,8 +6125,11 @@ public class ClientModeImpl extends StateMachine {
             return;
         }
 
+        WifiConfiguration config = mWifiConfigManager.getConfiguredNetwork(requestData.networkId);
+        int simSlot = TelephonyUtil.getSimSlot(config);
+        int subId = TelephonyUtil.getSubId(getSubscriptionManager(), simSlot);
         SimAuthResponseData response =
-                TelephonyUtil.get3GAuthResponse(requestData, getTelephonyManager());
+                TelephonyUtil.get3GAuthResponse(requestData, subId, getTelephonyManager());
         if (response != null) {
             mWifiNative.simAuthResponse(
                     mInterfaceName, requestData.networkId, response.type, response.response);
@@ -6308,6 +6359,8 @@ public class ClientModeImpl extends StateMachine {
      */
     public boolean syncInitialize(AsyncChannel channel) {
         Message resultMsg = channel.sendMessageSynchronously(CMD_INITIALIZE);
+        /// M: for OP extension
+        MtkWifiServiceAdapter.initialize(mContext);
         boolean result = (resultMsg.arg1 != FAILURE);
         resultMsg.recycle();
         return result;

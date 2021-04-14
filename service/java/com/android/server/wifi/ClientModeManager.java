@@ -266,8 +266,9 @@ public class ClientModeManager implements ActiveModeManager {
                     }
                     // if the interface goes down we should exit and go back to idle state.
                     Log.d(TAG, "interface down!");
-                    updateWifiState(WifiManager.WIFI_STATE_UNKNOWN,
-                                    WifiManager.WIFI_STATE_ENABLED);
+                    //M: Make sure CMD_INTERFACE_DOWN can be handled
+                    //updateWifiState(WifiManager.WIFI_STATE_UNKNOWN,
+                    //                WifiManager.WIFI_STATE_ENABLED);
                     mStateMachine.sendMessage(CMD_INTERFACE_DOWN);
                 }
             }

@@ -271,6 +271,9 @@ public class SoftApManager implements ActiveModeManager {
         // Make a copy of configuration for updating AP band and channel.
         WifiConfiguration localConfig = new WifiConfiguration(config);
 
+        com.mediatek.server.wifi.MtkSoftApUtils.stopP2p(mContext,
+                mStateMachine.getHandler().getLooper(), mWifiNative);
+
         int result = ApConfigUtil.updateApChannelConfig(
                 mWifiNative, mCountryCode,
                 mWifiApConfigStore.getAllowed2GChannel(), localConfig);

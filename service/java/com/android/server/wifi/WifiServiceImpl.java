@@ -65,6 +65,7 @@ import android.net.wifi.IDppCallback;
 import android.net.wifi.INetworkRequestMatchCallback;
 import android.net.wifi.IOnWifiUsabilityStatsListener;
 import android.net.wifi.ISoftApCallback;
+import android.net.wifi.IStaStateCallback;
 import android.net.wifi.ITrafficStateCallback;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiActivityEnergyInfo;
@@ -187,6 +188,7 @@ public class WifiServiceImpl extends BaseWifiService {
     /* Backup/Restore Module */
     private final WifiBackupRestore mWifiBackupRestore;
     private final WifiNetworkSuggestionsManager mWifiNetworkSuggestionsManager;
+    private WifiStaStateNotifier mWifiStaStateNotifier;
 
     private WifiLog mLog;
     /**
@@ -482,6 +484,10 @@ public class WifiServiceImpl extends BaseWifiService {
         mIfaceIpModes = new ConcurrentHashMap<>();
         mLocalOnlyHotspotRequests = new HashMap<>();
         enableVerboseLoggingInternal(getVerboseLoggingLevel());
+        /// M: Adjust log much property based on the status of verbose logging
+        if (getVerboseLoggingLevel() > 0) {
+            mWifiInjector.getPropertyService().set("persist.vendor.logmuch", "false");
+        }
         mRegisteredSoftApCallbacks =
                 new ExternalCallbackTracker<ISoftApCallback>(mClientModeImplHandler);
 
@@ -489,6 +495,7 @@ public class WifiServiceImpl extends BaseWifiService {
         mPowerProfile = mWifiInjector.getPowerProfile();
         mWifiNetworkSuggestionsManager = mWifiInjector.getWifiNetworkSuggestionsManager();
         mDppManager = mWifiInjector.getDppManager();
+        mWifiStaStateNotifier = mWifiInjector.getWifiStaStateNotifier();
     }
 
     /**
@@ -541,12 +548,18 @@ public class WifiServiceImpl extends BaseWifiService {
                     @Override
                     public void onReceive(Context context, Intent intent) {
                         String state = intent.getStringExtra(IccCardConstants.INTENT_KEY_ICC_STATE);
+                        int simSlot = intent.getIntExtra(PhoneConstants.PHONE_KEY, -1);
+                        if (simSlot == -1) { //-1 indicates single sim
+                            simSlot = 0;
+                        }
                         if (IccCardConstants.INTENT_VALUE_ICC_ABSENT.equals(state)) {
-                            Log.d(TAG, "resetting networks because SIM was removed");
-                            mClientModeImpl.resetSimAuthNetworks(false);
+                            Log.d(TAG, "resetting networks because SIM"
+                                    + simSlot + " was removed");
+                            mClientModeImpl.resetSimAuthNetworks(false, simSlot);
                         } else if (IccCardConstants.INTENT_VALUE_ICC_LOADED.equals(state)) {
-                            Log.d(TAG, "resetting networks because SIM was loaded");
-                            mClientModeImpl.resetSimAuthNetworks(true);
+                            Log.d(TAG, "resetting networks because SIM"
+                                    + simSlot + " was loaded");
+                            mClientModeImpl.resetSimAuthNetworks(true, simSlot);
                         }
                     }
                 },
@@ -905,8 +918,56 @@ public class WifiServiceImpl extends BaseWifiService {
             Binder.restoreCallingIdentity(ident);
         }
         mWifiMetrics.incrementNumWifiToggles(isPrivileged, enable);
+
+        if (com.mediatek.cta.CtaManagerFactory.getInstance().makeCtaManager().isCtaSupported()
+                && !isPrivileged) {
+            final int wiFiEnabledState = getWifiEnabledState();
+            if (enable) {
+                if (wiFiEnabledState == WifiManager.WIFI_STATE_DISABLING
+                        || wiFiEnabledState == WifiManager.WIFI_STATE_DISABLED) {
+                    if (startConsentUi(packageName, Binder.getCallingUid(),
+                            WifiManager.ACTION_REQUEST_ENABLE)) {
+                        return true;
+                    }
+                }
+            } else if (wiFiEnabledState == WifiManager.WIFI_STATE_ENABLING
+                    || wiFiEnabledState == WifiManager.WIFI_STATE_ENABLED) {
+                if (startConsentUi(packageName, Binder.getCallingUid(),
+                    WifiManager.ACTION_REQUEST_DISABLE)) {
+                        return true;
+                }
+            }
+        }
+
         mWifiController.sendMessage(CMD_WIFI_TOGGLED);
         return true;
+    }
+
+    private boolean startConsentUi(String packageName, int callingUid, String intentAction) {
+        if (UserHandle.getAppId(callingUid) == Process.SYSTEM_UID) {
+            return false;
+        }
+        try {
+            // Validate the package only if we are going to use it
+            ApplicationInfo applicationInfo = mContext.getPackageManager()
+                    .getApplicationInfoAsUser(packageName,
+                            PackageManager.MATCH_DEBUG_TRIAGED_MISSING,
+                            UserHandle.getUserId(callingUid));
+            if (applicationInfo.uid != callingUid) {
+                throw new SecurityException("Package " + packageName
+                        + " not in uid " + callingUid);
+            }
+
+            // Permission review mode, trigger a user prompt
+            Intent intent = new Intent(intentAction);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                    | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+            intent.putExtra(Intent.EXTRA_PACKAGE_NAME, packageName);
+            mContext.startActivity(intent);
+            return true;
+        } catch (PackageManager.NameNotFoundException e) {
+            throw new RemoteException(e.getMessage()).rethrowFromSystemServer();
+        }
     }
 
     /**
@@ -1117,7 +1178,12 @@ public class WifiServiceImpl extends BaseWifiService {
     private boolean stopSoftApInternal(int mode) {
         mLog.trace("stopSoftApInternal uid=%").c(Binder.getCallingUid()).flush();
 
-        mWifiController.sendMessage(CMD_SET_AP, 0, mode);
+        // M: Skip stop softap if device is encrypted.
+        if (!mFrameworkFacade.inStorageManagerCryptKeeperBounce()) {
+            mWifiController.sendMessage(CMD_SET_AP, 0, mode);
+        } else {
+            Log.d(TAG, "Device still encrypted. Skip stop softap request.");
+        }
         return true;
     }
 
@@ -2905,6 +2971,9 @@ public class WifiServiceImpl extends BaseWifiService {
         mFacade.setIntegerSetting(
                 mContext, Settings.Global.WIFI_VERBOSE_LOGGING_ENABLED, verbose);
         enableVerboseLoggingInternal(verbose);
+        /// M: Adjust log much property based on the status of verbose logging
+        mWifiInjector.getPropertyService().set(
+                "persist.vendor.logmuch", (verbose > 0 ? "false" : "true"));
     }
 
     void enableVerboseLoggingInternal(int verbose) {
@@ -3184,6 +3253,55 @@ public class WifiServiceImpl extends BaseWifiService {
         // Post operation to handler thread
         mWifiInjector.getClientModeImplHandler().post(() -> {
             mWifiTrafficPoller.removeCallback(callbackIdentifier);
+        });
+    }
+
+    /**
+     * see {@link android.net.wifi.WifiManager#registerStaStateCallback(
+     * WifiManager.StaStateCallback, Handler)}
+     *
+     * @param binder IBinder instance to allow cleanup if the app dies
+     * @param callback Sta State callback to register
+     * @param callbackIdentifier Unique ID of the registering callback. This ID will be used to
+     *        unregister the callback. See {@link unregisterStaStateCallback(int)}
+     *
+     * @throws RemoteException if remote exception happens
+     * @throws IllegalArgumentException if the arguments are null or invalid
+     */
+    @Override
+    public void registerStaStateCallback(IBinder binder, IStaStateCallback callback,
+                                             int callbackIdentifier) {
+        // verify arguments
+        if (binder == null) {
+            throw new IllegalArgumentException("Binder must not be null");
+        }
+        if (callback == null) {
+            throw new IllegalArgumentException("Callback must not be null");
+        }
+        if (mVerboseLoggingEnabled) {
+            mLog.info("registerStaStateCallback uid=%").c(Binder.getCallingUid()).flush();
+        }
+        // Post operation to handler thread
+        mWifiInjector.getClientModeImplHandler().post(() -> {
+            mWifiStaStateNotifier.addCallback(binder, callback, callbackIdentifier);
+        });
+    }
+
+    /**
+     * see {@link android.net.wifi.WifiManager#unregisterStaStateCallback(
+     * WifiManager.StaStateCallback)}
+     *
+     * @param callbackIdentifier Unique ID of the callback to be unregistered.
+     *
+     */
+    @Override
+    public void unregisterStaStateCallback(int callbackIdentifier) {
+        if (mVerboseLoggingEnabled) {
+            mLog.info("unregisterStaStateCallback uid=%").c(Binder.getCallingUid()).flush();
+        }
+        // Post operation to handler thread
+        mWifiInjector.getClientModeImplHandler().post(() -> {
+            mWifiStaStateNotifier.removeCallback(callbackIdentifier);
         });
     }
 

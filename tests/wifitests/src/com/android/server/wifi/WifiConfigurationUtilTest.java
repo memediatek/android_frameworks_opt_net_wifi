@@ -17,6 +17,7 @@
 package com.android.server.wifi;
 
 import static org.junit.Assert.*;
+import static org.mockito.Mockito.*;
 
 import android.content.pm.UserInfo;
 import android.net.IpConfiguration;
@@ -25,19 +26,27 @@ import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiEnterpriseConfig;
 import android.net.wifi.WifiNetworkSpecifier;
 import android.net.wifi.WifiScanner;
+import android.os.Binder;
+import android.net.wifi.WifiSsid;
 import android.os.PatternMatcher;
 import android.os.UserHandle;
 import android.util.Pair;
 
 import androidx.test.filters.SmallTest;
 
+import com.android.server.wifi.util.GbkUtil;
+import com.android.server.wifi.util.NativeUtil;
+
 import org.junit.Test;
 
+import java.security.ProviderException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+
+import javax.crypto.Mac;
 
 /**
  * Unit tests for {@link com.android.server.wifi.WifiConfigurationUtil}.
@@ -289,6 +298,32 @@ public class WifiConfigurationUtilTest {
         assertTrue(WifiConfigurationUtil.validate(config, WifiConfigurationUtil.VALIDATE_FOR_ADD));
 
         config.SSID = "\"가하아너너ㅓ저저ㅓ어아아다자저ㅓ더타아어어러두어\"";
+        assertFalse(WifiConfigurationUtil.validate(config, WifiConfigurationUtil.VALIDATE_FOR_ADD));
+        config.SSID = "\"\"";
+        assertFalse(WifiConfigurationUtil.validate(config, WifiConfigurationUtil.VALIDATE_FOR_ADD));
+    }
+
+    /**
+     * Verify that the validate method fails to validate WifiConfiguration with bad ssid length.
+     */
+    @Test
+    public void testValidateNegativeCases_BadGbkSsidLength() {
+        WifiConfiguration config = WifiConfigurationTestUtil.createOpenNetwork();
+        assertTrue(WifiConfigurationUtil.validate(config, WifiConfigurationUtil.VALIDATE_FOR_ADD));
+
+        ArrayList<Byte> ssidBytes = new ArrayList<>(
+                        Arrays.asList((byte) 0x41, (byte) 0x6e, (byte) 0x64, (byte) 0x72,
+                                (byte) 0x6f, (byte) 0x69, (byte) 0x64, (byte) 0x41, (byte) 0x50,
+                                (byte) 0xb2, (byte) 0xe2, (byte) 0xca, (byte) 0xd4,
+                                (byte) 0xb2, (byte) 0xe2, (byte) 0xca, (byte) 0xd4,
+                                (byte) 0xb2, (byte) 0xe2, (byte) 0xca, (byte) 0xd4,
+                                (byte) 0xb2, (byte) 0xe2, (byte) 0xca, (byte) 0xd4,
+                                (byte) 0xb2, (byte) 0xe2, (byte) 0xca, (byte) 0xd4,
+                                (byte) 0xb2, (byte) 0xe2, (byte) 0xca, (byte) 0xd4));
+        WifiSsid wifiSsid =
+                WifiSsid.createFromByteArray(NativeUtil.byteArrayFromArrayList(ssidBytes));
+        GbkUtil.checkAndSetGbk(wifiSsid);
+        config.SSID = "\"AndroidAP测试测试测试测试测试测试\"";
         assertFalse(WifiConfigurationUtil.validate(config, WifiConfigurationUtil.VALIDATE_FOR_ADD));
         config.SSID = "\"\"";
         assertFalse(WifiConfigurationUtil.validate(config, WifiConfigurationUtil.VALIDATE_FOR_ADD));
@@ -959,6 +994,49 @@ public class WifiConfigurationUtilTest {
         newConfig.macRandomizationSetting = WifiConfiguration.RANDOMIZATION_NONE;
         assertFalse(WifiConfigurationUtil.hasMacRandomizationSettingsChanged(
                 existingConfig, newConfig));
+    }
+
+    /**
+     * Verifies that calculatePersistentMacForConfiguration produces persistent, locally generated
+     * MAC addresses that are valid for MAC randomization.
+     */
+    @Test
+    public void testCalculatePersistentMacForConfiguration() {
+        // verify null inputs
+        assertNull(WifiConfigurationUtil.calculatePersistentMacForConfiguration(null, null));
+
+        // test multiple times since there is some randomness involved with hashing
+        int uid = Binder.getCallingUid();
+        for (int i = 0; i < 10; i++) {
+            // Verify that a the MAC address calculated is valid
+            WifiConfiguration config = WifiConfigurationTestUtil.createOpenNetwork();
+            Mac hashFunction = WifiConfigurationUtil.obtainMacRandHashFunction(uid);
+            MacAddress macAddress = WifiConfigurationUtil.calculatePersistentMacForConfiguration(
+                    config, hashFunction);
+            assertTrue(WifiConfiguration.isValidMacAddressForRandomization(macAddress));
+
+            // Verify that the secret used to generate MAC address is persistent
+            Mac hashFunction2 = WifiConfigurationUtil.obtainMacRandHashFunction(uid);
+            MacAddress macAddress2 = WifiConfigurationUtil.calculatePersistentMacForConfiguration(
+                    config, hashFunction2);
+            assertEquals(macAddress, macAddress2);
+        }
+    }
+
+    /**
+     * Verify the java.security.ProviderException is caught.
+     */
+    @Test
+    public void testCalculatePersistentMacCatchesException() {
+        Mac hashFunction = mock(Mac.class);
+        when(hashFunction.doFinal(any())).thenThrow(new ProviderException("error occurred"));
+        try {
+            WifiConfiguration config = WifiConfigurationTestUtil.createOpenNetwork();
+            assertNull(WifiConfigurationUtil.calculatePersistentMacForConfiguration(config,
+                    hashFunction));
+        } catch (Exception e) {
+            fail("Exception not caught.");
+        }
     }
 
     private static class EnterpriseConfig {

@@ -118,6 +118,7 @@ import java.util.Map;
  */
 public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
     private static final String TAG = "WifiP2pService";
+    private static final boolean DBG = true;
     private boolean mVerboseLoggingEnabled = false;
     private static final String NETWORKTYPE = "WIFI_P2P";
 
@@ -2074,6 +2075,7 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                 if (mVerboseLoggingEnabled) logd(getName());
                 sendMessageDelayed(obtainMessage(GROUP_CREATING_TIMED_OUT,
                         ++sGroupCreatingTimeoutIndex, 0), GROUP_CREATING_WAIT_TIME_MS);
+                com.mediatek.server.wifi.MtkSoftApUtils.stopSoftAp(mContext);
             }
 
             @Override

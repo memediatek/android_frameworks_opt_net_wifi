@@ -41,6 +41,7 @@ import android.util.Log;
 import com.android.server.wifi.WifiNative.SendMgmtFrameCallback;
 import com.android.server.wifi.WifiNative.SoftApListener;
 import com.android.server.wifi.hotspot2.NetworkDetail;
+import com.android.server.wifi.util.GbkUtil;
 import com.android.server.wifi.util.InformationElementUtil;
 import com.android.server.wifi.util.NativeUtil;
 import com.android.server.wifi.util.ScanResultUtil;
@@ -581,6 +582,7 @@ public class WificondControl implements IBinder.DeathRecipient {
             }
             for (NativeScanResult result : nativeResults) {
                 WifiSsid wifiSsid = WifiSsid.createFromByteArray(result.ssid);
+                GbkUtil.checkAndSetGbk(wifiSsid);
                 String bssid;
                 try {
                     bssid = NativeUtil.macAddressFromByteArray(result.bssid);
@@ -598,6 +600,9 @@ public class WificondControl implements IBinder.DeathRecipient {
                         new InformationElementUtil.Capabilities();
                 capabilities.from(ies, result.capability, isEnhancedOpenSupported());
                 String flags = capabilities.generateCapabilitiesString();
+                ///M: [WAPI] Check if we need to parse and add WAPI to capabilities flag
+                flags = com.mediatek.server.wifi.MtkWapi.generateCapabilitiesString(ies,
+                        result.capability, flags);
                 NetworkDetail networkDetail;
                 try {
                     networkDetail = new NetworkDetail(bssid, ies, null, result.frequency);
@@ -706,6 +711,13 @@ public class WificondControl implements IBinder.DeathRecipient {
                 // any performance issues.
                 if (!settings.hiddenNetworks.contains(network)) {
                     settings.hiddenNetworks.add(network);
+                }
+
+                // Support hidden gbk
+                HiddenNetwork networkExtraforGbk = GbkUtil.needAddExtraGbkSsid(ssid);
+                if (networkExtraforGbk != null) {
+                    settings.hiddenNetworks.add(networkExtraforGbk);
+                    Log.i(TAG, "scan with extra gbk ssid for hidden network");
                 }
             }
         }
@@ -922,6 +934,7 @@ public class WificondControl implements IBinder.DeathRecipient {
         mApInterfaces.clear();
         mApInterfaceListeners.clear();
         mSendMgmtFrameInProgress.set(false);
+        GbkUtil.clear();
     }
 
     /**

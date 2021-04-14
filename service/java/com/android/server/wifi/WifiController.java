@@ -101,6 +101,10 @@ public class WifiController extends StateMachine {
 
     private ScanOnlyModeManager.Listener mScanOnlyModeCallback = new ScanOnlyCallback();
     private ClientModeManager.Listener mClientModeCallback = new ClientModeCallback();
+    // M: For message logging.
+    private static final Class[] sMessageClasses = { WifiController.class };
+    private static final android.util.SparseArray<String> sGetWhatToString =
+            com.android.internal.util.MessageUtils.findMessageNames(sMessageClasses);
 
     WifiController(Context context, ClientModeImpl clientModeImpl, Looper clientModeImplLooper,
                    WifiSettingsStore wss, Looper wifiServiceLooper, FrameworkFacade f,
@@ -247,6 +251,7 @@ public class WifiController extends StateMachine {
     class DefaultState extends State {
         @Override
         public boolean processMessage(Message msg) {
+            Log.d(TAG, getName() + " " + sGetWhatToString.get(msg.what) + msg.toString());
             switch (msg.what) {
                 case CMD_SCAN_ALWAYS_MODE_CHANGED:
                 case CMD_WIFI_TOGGLED:
@@ -296,8 +301,15 @@ public class WifiController extends StateMachine {
                     break;
                 case CMD_EMERGENCY_CALL_STATE_CHANGED:
                 case CMD_EMERGENCY_MODE_CHANGED:
+                    boolean configWiFiDisableInECBM =
+                            mFacade.getConfigWiFiDisableInECBM(mContext);
+                    log("WifiController msg " + msg + " getConfigWiFiDisableInECBM "
+                            + configWiFiDisableInECBM);
                     if (msg.arg1 == 1) {
-                        transitionTo(mEcmState);
+                        mActiveModeWarden.stopSoftAPMode(WifiManager.IFACE_IP_MODE_UNSPECIFIED);
+                        if (configWiFiDisableInECBM) {
+                            transitionTo(mEcmState);
+                        }
                     }
                     break;
                 case CMD_AP_STOPPED:
@@ -324,6 +336,7 @@ public class WifiController extends StateMachine {
 
         @Override
         public void enter() {
+            log("StaDisabledState.enter()");
             mActiveModeWarden.disableWifi();
             // Supplicant can't restart right away, so note the time we switched off
             mDisabledTimestamp = SystemClock.elapsedRealtime();
@@ -332,6 +345,7 @@ public class WifiController extends StateMachine {
         }
         @Override
         public boolean processMessage(Message msg) {
+            Log.d(TAG, getName() + " " + sGetWhatToString.get(msg.what) + msg.toString());
             switch (msg.what) {
                 case CMD_WIFI_TOGGLED:
                     if (mSettingsStore.isWifiToggleEnabled()) {
@@ -420,6 +434,7 @@ public class WifiController extends StateMachine {
 
         @Override
         public boolean processMessage(Message msg) {
+            Log.d(TAG, getName() + " " + sGetWhatToString.get(msg.what) + msg.toString());
             switch (msg.what) {
                 case CMD_WIFI_TOGGLED:
                     if (! mSettingsStore.isWifiToggleEnabled()) {
@@ -492,6 +507,7 @@ public class WifiController extends StateMachine {
 
         @Override
         public void enter() {
+            log("StaDisabledWithScanState.enter()");
             // now trigger the actual mode switch in ActiveModeWarden
             mActiveModeWarden.enterScanOnlyMode();
 
@@ -504,6 +520,7 @@ public class WifiController extends StateMachine {
 
         @Override
         public boolean processMessage(Message msg) {
+            Log.d(TAG, getName() + " " + sGetWhatToString.get(msg.what) + msg.toString());
             switch (msg.what) {
                 case CMD_WIFI_TOGGLED:
                     if (mSettingsStore.isWifiToggleEnabled()) {
@@ -597,14 +614,7 @@ public class WifiController extends StateMachine {
         private int mEcmEntryCount;
         @Override
         public void enter() {
-            mActiveModeWarden.stopSoftAPMode(WifiManager.IFACE_IP_MODE_UNSPECIFIED);
-            boolean configWiFiDisableInECBM =
-                    mFacade.getConfigWiFiDisableInECBM(mContext);
-            log("WifiController msg getConfigWiFiDisableInECBM "
-                    + configWiFiDisableInECBM);
-            if (configWiFiDisableInECBM) {
-                mActiveModeWarden.shutdownWifi();
-            }
+            mActiveModeWarden.shutdownWifi();
             mEcmEntryCount = 1;
         }
 

@@ -348,6 +348,14 @@ public class XmlUtil {
         public static final String XML_TAG_ROAMING_CONSORTIUM_OIS = "RoamingConsortiumOIs";
         public static final String XML_TAG_RANDOMIZED_MAC_ADDRESS = "RandomizedMacAddress";
         public static final String XML_TAG_MAC_RANDOMIZATION_SETTING = "MacRandomizationSetting";
+        ///M: [WAPI] @{
+        public static final String XML_TAG_WAPI_CERT_SEL_MODE = "WapiCertSelMode";
+        public static final String XML_TAG_WAPI_CERT_SEL = "WapiCertSel";
+        public static final String XML_TAG_WAPI_PSK_TYPE = "WapiPskType";
+        public static final String XML_TAG_WAPI_PSK = "WapiPsk";
+        ///M: For Andorid O WAPI compatibility
+        public static final String XML_TAG_ALIASES = "Aliases";
+        /// }@
 
         /**
          * Write WepKeys to the XML stream.
@@ -416,6 +424,12 @@ public class XmlUtil {
                     out, XML_TAG_ALLOWED_SUITE_B_CIPHERS,
                     configuration.allowedSuiteBCiphers.toByteArray());
             XmlUtil.writeNextValue(out, XML_TAG_SHARED, configuration.shared);
+            ///M: [WAPI] @{
+            XmlUtil.writeNextValue(out, XML_TAG_WAPI_CERT_SEL_MODE, configuration.wapiCertSelMode);
+            XmlUtil.writeNextValue(out, XML_TAG_WAPI_CERT_SEL, configuration.wapiCertSel);
+            XmlUtil.writeNextValue(out, XML_TAG_WAPI_PSK_TYPE, configuration.wapiPskType);
+            XmlUtil.writeNextValue(out, XML_TAG_WAPI_PSK, configuration.wapiPsk);
+            /// }@
         }
 
         /**
@@ -661,6 +675,27 @@ public class XmlUtil {
                         configuration.macRandomizationSetting = (int) value;
                         macRandomizationSettingExists = true;
                         break;
+                    /// M: [WAPI] @{
+                    case XML_TAG_WAPI_CERT_SEL_MODE:
+                        configuration.wapiCertSelMode = (int) value;
+                        break;
+                    case XML_TAG_WAPI_CERT_SEL:
+                        configuration.wapiCertSel = (String) value;
+                        break;
+                    case XML_TAG_WAPI_PSK_TYPE:
+                        configuration.wapiPskType = (int) value;
+                        break;
+                    ///M: For Android O WAPI compatibility
+                    case XML_TAG_WAPI_PSK:
+                        configuration.wapiPsk = (String) value;
+                        if (configuration.wapiPsk != null) {
+                            configuration.preSharedKey = (String) value;
+                        }
+                        break;
+                    case XML_TAG_ALIASES:
+                        configuration.wapiCertSel = (String) value;
+                        break;
+                    /// }@
                     default:
                         throw new XmlPullParserException(
                                 "Unknown value name found: " + valueName[0]);
@@ -1017,6 +1052,7 @@ public class XmlUtil {
         public static final String XML_TAG_PHASE2_METHOD = "Phase2Method";
         public static final String XML_TAG_PLMN = "PLMN";
         public static final String XML_TAG_REALM = "Realm";
+        public static final String XML_TAG_SIMNUM = "SimNum";
 
         /**
          * Write the WifiEnterpriseConfig data elements from the provided config to the XML
@@ -1055,6 +1091,7 @@ public class XmlUtil {
             XmlUtil.writeNextValue(out, XML_TAG_PHASE2_METHOD, enterpriseConfig.getPhase2Method());
             XmlUtil.writeNextValue(out, XML_TAG_PLMN, enterpriseConfig.getPlmn());
             XmlUtil.writeNextValue(out, XML_TAG_REALM, enterpriseConfig.getRealm());
+            XmlUtil.writeNextValue(out, XML_TAG_SIMNUM, enterpriseConfig.getSimNum());
         }
 
         /**
@@ -1135,6 +1172,9 @@ public class XmlUtil {
                         break;
                     case XML_TAG_REALM:
                         enterpriseConfig.setRealm((String) value);
+                        break;
+                    case XML_TAG_SIMNUM:
+                        enterpriseConfig.setSimNum((int) value);
                         break;
                     default:
                         throw new XmlPullParserException(

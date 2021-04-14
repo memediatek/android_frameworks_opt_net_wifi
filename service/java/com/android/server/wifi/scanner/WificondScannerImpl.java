@@ -383,9 +383,14 @@ public class WificondScannerImpl extends WifiScannerImpl implements Handler.Call
                     if (mLastScanSettings.singleScanFreqs.containsChannel(
                                     result.frequency)) {
                         singleScanResults.add(result);
+                    } else {
+                        Log.d(TAG, "pollLatestScanData filtered by freq: "
+                            + result.frequency + " BSSID: " + result.BSSID);
                     }
                 } else {
                     numFilteredScanResults++;
+                    Log.d(TAG, "pollLatestScanData filtered by timestamp: " + timestamp_ms
+                        + " BSSID: " + result.BSSID + " freq: " + result.frequency);
                 }
             }
             if (numFilteredScanResults != 0) {
@@ -419,6 +424,7 @@ public class WificondScannerImpl extends WifiScannerImpl implements Handler.Call
     }
 
     private boolean startHwPnoScan(WifiNative.PnoSettings pnoSettings) {
+        mWifiNative.removeAllNetworks(mIfaceName);
         return mWifiNative.startPnoScan(mIfaceName, pnoSettings);
     }
 

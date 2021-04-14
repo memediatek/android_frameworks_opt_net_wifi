@@ -274,6 +274,7 @@ public class SupplicantP2pIfaceHal {
     }
 
     private ISupplicantIface getIfaceV1_0(@NonNull String ifaceName) {
+        if (mISupplicant == null) return null;
         /** List all supplicant Ifaces */
         final ArrayList<ISupplicant.IfaceInfo> supplicantIfaces = new ArrayList();
         try {
@@ -358,7 +359,7 @@ public class SupplicantP2pIfaceHal {
      */
     public boolean teardownIface(@NonNull String ifaceName) {
         synchronized (mLock) {
-            if (mISupplicantP2pIface == null) return false;
+            if (mISupplicantP2pIface == null || ifaceName == null) return false;
             // Only supported for V1.1
             if (isV1_1()) {
                 return removeIfaceV1_1(ifaceName);
@@ -2011,6 +2012,29 @@ public class SupplicantP2pIfaceHal {
                     continue;
                 }
 
+                SupplicantResult<Boolean> resultIsPersistent =
+                        new SupplicantResult("isPersistent(" + networkId + ")");
+                try {
+                    network.isPersistent(
+                            (SupplicantStatus status, boolean isPersistent) -> {
+                                resultIsPersistent.setResult(status, isPersistent);
+                            });
+                } catch (RemoteException e) {
+                    Log.e(TAG, "ISupplicantP2pIface exception: " + e);
+                    supplicantServiceDiedHandler();
+                }
+                if (!resultIsPersistent.isSuccess() || !resultIsPersistent.getResult()) {
+                    /*
+                     * The unused profile is sometimes remained when the p2p group formation
+                     * is failed. So, we clean up the p2p group here.
+                     */
+                    if (sVerboseLoggingEnabled) {
+                        logd("clean up the unused persistent group. netId=" + networkId);
+                    }
+                    removeNetwork(networkId);
+                    continue;
+                }
+
                 WifiP2pGroup group = new WifiP2pGroup();
                 group.setNetworkId(networkId);
 
@@ -2377,7 +2401,7 @@ public class SupplicantP2pIfaceHal {
                     "setMacRandomization(" + enable + ")");
             try {
                 result.setResult(ifaceV12.setMacRandomization(enable));
-            } catch (RemoteException e) {
+            } catch (Exception e) {
                 Log.e(TAG, "ISupplicantP2pIface exception: " + e);
                 supplicantServiceDiedHandler();
             }

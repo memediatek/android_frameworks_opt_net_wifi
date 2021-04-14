@@ -2100,7 +2100,9 @@ public class WifiMetrics {
                 ScanResultMatchInfo matchInfo = ScanResultMatchInfo.fromScanResult(scanResult);
                 Pair<PasspointProvider, PasspointMatch> providerMatch = null;
                 PasspointProvider passpointProvider = null;
-                if (networkDetail.isInterworking()) {
+                // M: To avoid switching channel and affect t-put,
+                // stop anqp even a scan result has interworking.
+                if (false && networkDetail.isInterworking()) {
                     providerMatch =
                             mPasspointManager.matchProvider(scanResult);
                     passpointProvider = providerMatch != null ? providerMatch.first : null;
@@ -3601,7 +3603,9 @@ public class WifiMetrics {
                 return;
         }
         if (logEvent) {
-            addStaEvent(event);
+            synchronized (mLock) {
+                addStaEvent(event);
+            }
         }
     }
     /**
@@ -3665,7 +3669,9 @@ public class WifiMetrics {
             event.frameworkDisconnectReason = frameworkDisconnectReason;
         }
         event.configInfo = createConfigInfo(config);
-        addStaEvent(event);
+        synchronized (mLock) {
+            addStaEvent(event);
+        }
     }
 
     private void addStaEvent(StaEvent staEvent) {

@@ -77,7 +77,8 @@ public class SelfRecovery {
         }
         if (reason == REASON_STA_IFACE_DOWN) {
             Log.e(TAG, "STA interface down, disable wifi");
-            mWifiController.sendMessage(WifiController.CMD_RECOVERY_DISABLE_WIFI);
+            //M: Modify it for restarting wifi after whole chip reset
+            mWifiController.sendMessage(WifiController.CMD_RECOVERY_RESTART_WIFI, reason);
             return;
         }
 

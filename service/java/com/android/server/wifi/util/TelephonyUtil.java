@@ -88,12 +88,18 @@ public class TelephonyUtil {
      * or config is invalid
      */
     public static Pair<String, String> getSimIdentity(TelephonyManager tm,
+                                                      SubscriptionManager sm,
             TelephonyUtil telephonyUtil,
             WifiConfiguration config, CarrierNetworkConfig carrierNetworkConfig) {
         if (tm == null) {
             Log.e(TAG, "No valid TelephonyManager");
             return null;
         }
+        if (sm == null) {
+            Log.e(TAG, "No valid SubscriptionManager");
+            return null;
+        }
+
         TelephonyManager defaultDataTm = tm.createForSubscriptionId(
                 SubscriptionManager.getDefaultDataSubscriptionId());
         if (carrierNetworkConfig == null) {
@@ -103,9 +109,16 @@ public class TelephonyUtil {
         String imsi = defaultDataTm.getSubscriberId();
         String mccMnc = "";
 
-        if (defaultDataTm.getSimState() == TelephonyManager.SIM_STATE_READY) {
-            mccMnc = defaultDataTm.getSimOperator();
+        int simSlot = getSimSlot(config);
+        int subId = getSubId(sm, simSlot);
+        if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+            imsi = tm.getSubscriberId(subId);
+            if (tm.getSimState(simSlot) == TelephonyManager.SIM_STATE_READY) {
+                mccMnc = tm.getSimOperator(subId);
+            }
         }
+        Log.d(TAG, "imsi: " + imsi + " mccMnc: " + mccMnc
+                + " subId: " + subId + " simSlot: " + simSlot);
 
         String identity = buildIdentity(getSimMethodForConfig(config), imsi, mccMnc, false);
         if (identity == null) {
@@ -333,6 +346,28 @@ public class TelephonyUtil {
     }
 
     /**
+     * Get simSlot of a SIM config.
+     *
+     * @param config Config corresponding to the network.
+     * @return simSlot for the config, -1 if it's not a SIM config.
+     */
+    public static int getSimSlot(WifiConfiguration config) {
+        if (config == null || !isSimConfig(config)) {
+            return -1;
+        }
+        return config.enterpriseConfig.getSimNum();
+    }
+
+    public static int getSubId(SubscriptionManager sm, int simSlot) {
+        int[] subIds = sm.getSubscriptionIds(simSlot);
+        if (subIds != null && subIds.length > 0) {
+            return subIds[0];
+        } else {
+            return SubscriptionManager.INVALID_SUBSCRIPTION_ID;
+        }
+    }
+
+    /**
      * Returns true if {@code identity} contains an anonymous@realm identity, false otherwise.
      */
     public static boolean isAnonymousAtRealmIdentity(String identity) {
@@ -451,8 +486,9 @@ public class TelephonyUtil {
      * @return the response data processed by SIM. If all request data is malformed, then returns
      * empty string. If request data is invalid, then returns null.
      */
-    public static String getGsmSimAuthResponse(String[] requestData, TelephonyManager tm) {
-        return getGsmAuthResponseWithLength(requestData, tm, TelephonyManager.APPTYPE_USIM);
+    public static String getGsmSimAuthResponse(String[] requestData, int subId,
+            TelephonyManager tm) {
+        return getGsmAuthResponseWithLength(requestData, subId, tm, TelephonyManager.APPTYPE_USIM);
     }
 
     /**
@@ -468,16 +504,22 @@ public class TelephonyUtil {
      * @return the response data processed by SIM. If all request data is malformed, then returns
      * empty string. If request data is invalid, then returns null.
      */
-    public static String getGsmSimpleSimAuthResponse(String[] requestData, TelephonyManager tm) {
-        return getGsmAuthResponseWithLength(requestData, tm, TelephonyManager.APPTYPE_SIM);
+    public static String getGsmSimpleSimAuthResponse(String[] requestData, int subId,
+            TelephonyManager tm) {
+        return getGsmAuthResponseWithLength(requestData, subId, tm, TelephonyManager.APPTYPE_SIM);
     }
 
-    private static String getGsmAuthResponseWithLength(String[] requestData, TelephonyManager tm,
-            int appType) {
+    private static String getGsmAuthResponseWithLength(String[] requestData, int subId,
+            TelephonyManager tm, int appType) {
         if (tm == null) {
             Log.e(TAG, "No valid TelephonyManager");
             return null;
         }
+        if (subId == SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+            Log.e(TAG, "No valid SubscriptionId");
+            return null;
+        }
+
         TelephonyManager defaultDataTm = tm.createForSubscriptionId(
                 SubscriptionManager.getDefaultDataSubscriptionId());
         StringBuilder sb = new StringBuilder();
@@ -497,8 +539,8 @@ public class TelephonyUtil {
 
             String base64Challenge = Base64.encodeToString(rand, Base64.NO_WRAP);
 
-            String tmResponse = defaultDataTm.getIccAuthentication(
-                    appType, TelephonyManager.AUTHTYPE_EAP_SIM, base64Challenge);
+            String tmResponse = tm.getIccAuthentication(subId, appType,
+                    TelephonyManager.AUTHTYPE_EAP_SIM, base64Challenge);
             Log.v(TAG, "Raw Response - " + tmResponse);
 
             if (tmResponse == null || tmResponse.length() <= 4) {
@@ -545,10 +587,14 @@ public class TelephonyUtil {
      * @return the response data processed by SIM. If all request data is malformed, then returns
      * empty string. If request data is invalid, then returns null.
      */
-    public static String getGsmSimpleSimNoLengthAuthResponse(String[] requestData,
+    public static String getGsmSimpleSimNoLengthAuthResponse(String[] requestData, int subId,
             TelephonyManager tm) {
         if (tm == null) {
             Log.e(TAG, "No valid TelephonyManager");
+            return null;
+        }
+        if (subId == SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+            Log.e(TAG, "No valid SubscriptionId");
             return null;
         }
         TelephonyManager defaultDataTm = tm.createForSubscriptionId(
@@ -570,7 +616,7 @@ public class TelephonyUtil {
 
             String base64Challenge = Base64.encodeToString(rand, Base64.NO_WRAP);
 
-            String tmResponse = defaultDataTm.getIccAuthentication(TelephonyManager.APPTYPE_SIM,
+            String tmResponse = tm.getIccAuthentication(subId, TelephonyManager.APPTYPE_SIM,
                     TelephonyManager.AUTHTYPE_EAP_SIM, base64Challenge);
             Log.v(TAG, "Raw Response - " + tmResponse);
 
@@ -627,7 +673,7 @@ public class TelephonyUtil {
         public String response;
     }
 
-    public static SimAuthResponseData get3GAuthResponse(SimAuthRequestData requestData,
+    public static SimAuthResponseData get3GAuthResponse(SimAuthRequestData requestData, int subId,
             TelephonyManager tm) {
         StringBuilder sb = new StringBuilder();
         byte[] rand = null;
@@ -649,10 +695,8 @@ public class TelephonyUtil {
         if (rand != null && authn != null) {
             String base64Challenge = Base64.encodeToString(concatHex(rand, authn), Base64.NO_WRAP);
             if (tm != null) {
-                tmResponse = tm
-                        .createForSubscriptionId(SubscriptionManager.getDefaultDataSubscriptionId())
-                        .getIccAuthentication(TelephonyManager.APPTYPE_USIM,
-                                TelephonyManager.AUTHTYPE_EAP_AKA, base64Challenge);
+                tmResponse = tm.getIccAuthentication(subId, TelephonyManager.APPTYPE_USIM,
+                        TelephonyManager.AUTHTYPE_EAP_AKA, base64Challenge);
                 Log.v(TAG, "Raw Response - " + tmResponse);
             } else {
                 Log.e(TAG, "No valid TelephonyManager");

@@ -61,6 +61,8 @@ public class ScanResultMatchInfo {
             return WifiConfiguration.SECURITY_TYPE_OWE;
         } else if (WifiConfigurationUtil.isConfigForOpenNetwork(config)) {
             return WifiConfiguration.SECURITY_TYPE_OPEN;
+        } else if (com.mediatek.server.wifi.MtkWapi.isConfigForWapiNetwork(config)) {
+            return WifiConfiguration.SECURITY_TYPE_WAPI;
         }
         throw new IllegalArgumentException("Invalid WifiConfiguration: " + config);
     }
@@ -79,7 +81,10 @@ public class ScanResultMatchInfo {
      * Fetch network type from scan result.
      */
     public static @WifiConfiguration.SecurityType int getNetworkType(ScanResult scanResult) {
-        if (ScanResultUtil.isScanResultForSaeNetwork(scanResult)) {
+        ///M: [WAPI] Need to check WAPI before PSK since [WAPI-PSK] contains [WAPI] and [PSK]
+        if (com.mediatek.server.wifi.MtkWapi.isScanResultForWapiNetwork(scanResult)) {
+            return WifiConfiguration.SECURITY_TYPE_WAPI;
+        } else if (ScanResultUtil.isScanResultForSaeNetwork(scanResult)) {
             return WifiConfiguration.SECURITY_TYPE_SAE;
         } else if (ScanResultUtil.isScanResultForPskNetwork(scanResult)) {
             return WifiConfiguration.SECURITY_TYPE_PSK;

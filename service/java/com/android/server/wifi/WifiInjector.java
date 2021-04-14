@@ -64,6 +64,10 @@ import com.android.server.wifi.rtt.RttMetrics;
 import com.android.server.wifi.util.WifiPermissionsUtil;
 import com.android.server.wifi.util.WifiPermissionsWrapper;
 
+/// M: Add for OP extension
+import com.mediatek.server.wifi.MtkNetworkEvaluator;
+import com.mediatek.server.wifi.MtkWifiServiceAdapter;
+
 import java.util.Random;
 
 /**
@@ -100,6 +104,7 @@ public class WifiInjector {
     private final ScoringParams mScoringParams;
     private final ClientModeImpl mClientModeImpl;
     private final ActiveModeWarden mActiveModeWarden;
+    private final WifiStaStateNotifier mWifiStaStateNotifier;
     private final WifiSettingsStore mSettingsStore;
     private OpenNetworkNotifier mOpenNetworkNotifier;
     private CarrierNetworkNotifier mCarrierNetworkNotifier;
@@ -202,7 +207,7 @@ public class WifiInjector {
                 mCellularLinkLayerStatsCollector);
         // Modules interacting with Native.
         mWifiMonitor = new WifiMonitor(this);
-        mHalDeviceManager = new HalDeviceManager(mClock);
+        mHalDeviceManager = new HalDeviceManager(mClock, clientModeImplLooper);
         mWifiVendorHal =
                 new WifiVendorHal(mHalDeviceManager, mWifiCoreHandlerThread.getLooper());
         mSupplicantStaIfaceHal =
@@ -239,12 +244,12 @@ public class WifiInjector {
         mWifiKeyStore = new WifiKeyStore(mKeyStore);
         mWifiConfigStore = new WifiConfigStore(
                 mContext, clientModeImplLooper, mClock, mWifiMetrics,
-                WifiConfigStore.createSharedFile());
+                WifiConfigStore.createSharedFile(UserManager.get(mContext)));
         SubscriptionManager subscriptionManager =
                 mContext.getSystemService(SubscriptionManager.class);
         // Config Manager
         mWifiConfigManager = new WifiConfigManager(mContext, mClock,
-                UserManager.get(mContext), makeTelephonyManager(),
+                UserManager.get(mContext), makeTelephonyManager(), makeSubscriptionManager(),
                 mWifiKeyStore, mWifiConfigStore, mWifiPermissionsUtil,
                 mWifiPermissionsWrapper, this, new NetworkListSharedStoreData(mContext),
                 new NetworkListUserStoreData(mContext),
@@ -269,8 +274,8 @@ public class WifiInjector {
                 mWifiConfigManager, mClock, mConnectivityLocalLog, mWifiConnectivityHelper,
                 subscriptionManager);
         mWifiNetworkSuggestionsManager = new WifiNetworkSuggestionsManager(mContext,
-                new Handler(mWifiCoreHandlerThread.getLooper()), this,
-                mWifiPermissionsUtil, mWifiConfigManager, mWifiConfigStore, mWifiMetrics);
+                new Handler(mWifiCoreHandlerThread.getLooper()), this, mWifiPermissionsUtil,
+                mWifiConfigManager, mWifiConfigStore, mWifiMetrics, mWifiKeyStore);
         mNetworkSuggestionEvaluator = new NetworkSuggestionEvaluator(mWifiNetworkSuggestionsManager,
                 mWifiConfigManager, mConnectivityLocalLog);
         mScoredNetworkEvaluator = new ScoredNetworkEvaluator(context, clientModeImplLooper,
@@ -308,9 +313,10 @@ public class WifiInjector {
                 this, mBackupManagerProxy, mCountryCode, mWifiNative,
                 new WrongPasswordNotifier(mContext, mFrameworkFacade),
                 mSarManager, mWifiTrafficPoller, mLinkProbeManager);
-        mActiveModeWarden = new ActiveModeWarden(this, mContext, clientModeImplLooper,
-                mWifiNative, new DefaultModeManager(mContext, clientModeImplLooper),
-                mBatteryStats);
+        mWifiStaStateNotifier = new WifiStaStateNotifier(clientModeImplLooper, this);
+        mActiveModeWarden = new ActiveModeWardenForDeferRequest(this, mContext,
+                clientModeImplLooper, mWifiNative,
+                new DefaultModeManager(mContext, clientModeImplLooper), mBatteryStats);
 
         WakeupNotificationFactory wakeupNotificationFactory =
                 new WakeupNotificationFactory(mContext, mFrameworkFacade);
@@ -336,6 +342,11 @@ public class WifiInjector {
         mDppManager = new DppManager(mWifiCoreHandlerThread.getLooper(), mWifiNative,
                 mWifiConfigManager, mContext, mDppMetrics);
         mIpMemoryStore = IpMemoryStore.getMemoryStore(mContext);
+
+        /// M: Add for OP extension
+        if (MtkWifiServiceAdapter.needCustomEvaluator()) {
+            mWifiNetworkSelector.registerNetworkEvaluator(new MtkNetworkEvaluator());
+        }
 
         // Register the various network evaluators with the network selector.
         mWifiNetworkSelector.registerNetworkEvaluator(mSavedNetworkEvaluator);
@@ -443,6 +454,10 @@ public class WifiInjector {
         return mActiveModeWarden;
     }
 
+    public WifiStaStateNotifier getWifiStaStateNotifier() {
+        return mWifiStaStateNotifier;
+    }
+
     public WifiSettingsStore getWifiSettingsStore() {
         return mSettingsStore;
     }
@@ -509,6 +524,12 @@ public class WifiInjector {
 
     public TelephonyManager makeTelephonyManager() {
         return (TelephonyManager) mContext.getSystemService(Context.TELEPHONY_SERVICE);
+    }
+
+    public SubscriptionManager makeSubscriptionManager() {
+        // may not be available when WiFi starts
+        return (SubscriptionManager) mContext
+                .getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
     }
 
     public WifiStateTracker getWifiStateTracker() {

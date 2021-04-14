@@ -19,6 +19,7 @@ package com.android.server.wifi.util;
 import android.text.TextUtils;
 
 import com.android.server.wifi.ByteBufferReader;
+import com.android.server.wifi.util.GbkUtil;
 
 import libcore.util.HexEncoding;
 
@@ -27,6 +28,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
 import java.nio.charset.CharsetDecoder;
 import java.nio.charset.CharsetEncoder;
 import java.nio.charset.StandardCharsets;
@@ -53,6 +55,9 @@ public class NativeUtil {
     public static ArrayList<Byte> stringToByteArrayList(String str) {
         if (str == null) {
             throw new IllegalArgumentException("null string");
+        }
+        if (GbkUtil.isGbkSsid(str)) {
+            return GbkUtil.stringToByteArrayList(str);
         }
         // Ensure that the provided string is UTF_8 encoded.
         CharsetEncoder encoder = StandardCharsets.UTF_8.newEncoder();
@@ -253,7 +258,12 @@ public class NativeUtil {
         byte[] byteArray = byteArrayFromArrayList(bytes);
         // Check for 0's in the byte stream in which case we cannot convert this into a string.
         if (!bytes.contains(Byte.valueOf((byte) 0))) {
-            CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder();
+            CharsetDecoder decoder;
+            if (GbkUtil.checkAndSetGbk(byteArray)) {
+                decoder = Charset.forName("GB2312").newDecoder();
+            } else {
+                decoder = StandardCharsets.UTF_8.newDecoder();
+            }
             try {
                 CharBuffer decoded = decoder.decode(ByteBuffer.wrap(byteArray));
                 return "\"" + decoded.toString() + "\"";

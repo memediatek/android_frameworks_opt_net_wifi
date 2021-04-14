@@ -85,6 +85,7 @@ public class SavedNetworkEvaluator implements WifiNetworkSelector.NetworkEvaluat
 
     private void localLog(String log) {
         mLocalLog.log(log);
+        android.util.Log.d(NAME, log);
     }
 
     /**
@@ -231,8 +232,10 @@ public class SavedNetworkEvaluator implements WifiNetworkSelector.NetworkEvaluat
                         + scanResult.BSSID);
                 continue;
             } else if (TelephonyUtil.isSimConfig(network)
-                    && !TelephonyUtil.isSimPresent(mSubscriptionManager)) {
+                    && !mWifiConfigManager.isSimPresent(TelephonyUtil.getSimSlot(network))) {
                 // Don't select if security type is EAP SIM/AKA/AKA' when SIM is not present.
+                localLog("Network " + WifiNetworkSelector.toNetworkString(network)
+                        + " is skipped due to sim card absent");
                 continue;
             }
 

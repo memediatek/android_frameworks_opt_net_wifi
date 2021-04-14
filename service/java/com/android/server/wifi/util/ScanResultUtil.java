@@ -117,6 +117,7 @@ public class ScanResultUtil {
      */
     public static boolean isScanResultForOpenNetwork(ScanResult scanResult) {
         return (!(isScanResultForWepNetwork(scanResult) || isScanResultForPskNetwork(scanResult)
+                || com.mediatek.server.wifi.MtkWapi.isScanResultForWapiNetwork(scanResult)
                 || isScanResultForEapNetwork(scanResult) || isScanResultForSaeNetwork(scanResult)
                 || isScanResultForEapSuiteBNetwork(scanResult)));
     }
@@ -147,7 +148,10 @@ public class ScanResultUtil {
      */
     public static void setAllowedKeyManagementFromScanResult(ScanResult scanResult,
             WifiConfiguration config) {
-        if (isScanResultForSaeNetwork(scanResult)) {
+        if (com.mediatek.server.wifi.MtkWapi.isScanResultForWapiNetwork(scanResult)) {
+            config.allowedKeyManagement.set(scanResult.capabilities.contains("PSK") ?
+                    WifiConfiguration.KeyMgmt.WAPI_PSK : WifiConfiguration.KeyMgmt.WAPI_CERT);
+        } else if (isScanResultForSaeNetwork(scanResult)) {
             config.setSecurityParams(WifiConfiguration.SECURITY_TYPE_SAE);
         } else if (isScanResultForPskNetwork(scanResult)) {
             config.setSecurityParams(WifiConfiguration.SECURITY_TYPE_PSK);
